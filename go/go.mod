@@ -1,4 +1,4 @@
-module github.com/sivel/amanda
+module github.com/sivel/amanda/go
 
 go 1.16
 
