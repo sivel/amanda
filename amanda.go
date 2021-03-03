@@ -180,6 +180,7 @@ func (a *Amanda) Collection(c *gin.Context) {
 	collections, err := discoverCollections(a.Artifacts, namespace, name, "")
 	if err != nil {
 		c.AbortWithError(500, err)
+		return
 	}
 	if len(collections) == 0 {
 		a.NotFound(c)
@@ -210,6 +211,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 	collections, err := discoverCollections(a.Artifacts, namespace, name, "")
 	if err != nil {
 		c.AbortWithError(500, err)
+		return
 	}
 	if len(collections) == 0 {
 		a.NotFound(c)
@@ -238,6 +240,7 @@ func (a *Amanda) Version(c *gin.Context) {
 	collections, err := discoverCollections(a.Artifacts, namespace, name, version)
 	if err != nil {
 		c.AbortWithError(500, err)
+		return
 	}
 	if len(collections) == 0 {
 		a.NotFound(c)

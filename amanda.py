@@ -4,6 +4,7 @@
 # GNU General Public License v3.0+
 #     (see https://www.gnu.org/licenses/gpl-3.0.txt)
 
+import argparse
 import json
 import os
 import tarfile
@@ -12,9 +13,6 @@ from functools import partial
 from hashlib import sha256
 
 from flask import Flask, g, request, send_from_directory, url_for
-
-
-ARTIFACT_BASE = os.getenv('SIMPLE_GALAXY_ARTIFACT_BASE', 'artifacts')
 
 
 app = Flask(__name__)
@@ -35,9 +33,14 @@ def discover_collections(namespace=None, name=None, version=None):
     except AttributeError:
         g.discovery_cache = defaultdict(dict)
 
-    for path in os.listdir(ARTIFACT_BASE):
+    artifacts = app.config['ARTIFACTS']
+
+    for path in os.listdir(artifacts):
         filename = os.path.basename(path)
-        path = os.path.join(os.path.abspath(ARTIFACT_BASE), filename)
+        path = os.path.join(os.path.abspath(artifacts), filename)
+        if not os.path.isfile(path):
+            continue
+
         stat = os.stat(path)
 
         info = g.discovery_cache[filename].get(stat.st_mtime)
@@ -220,4 +223,9 @@ def version(namespace, collection, version):
 
 
 if __name__ == '__main__':
-    app.run('0.0.0.0', 5000, debug=True, threaded=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--artifacts', default='artifacts',
+                        help='Location of the artifacts dir')
+    args = parser.parse_args()
+    app.config['ARTIFACTS'] = args.artifacts
+    app.run('0.0.0.0', 5000, threaded=True)
