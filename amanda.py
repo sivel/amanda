@@ -49,6 +49,9 @@ def discover_collections(namespace=None, name=None, version=None):
             info = {
                 'filename': filename,
                 'path': path,
+                'created': datetime.datetime.fromtimestamp(
+                    stat.st_mtime
+                ).isoformat(),
             }
 
             with open(path, 'rb') as f:
@@ -109,10 +112,12 @@ def api():
 @app.route('/api/v2/collections/<namespace>/<collection>')
 def collection(namespace, collection):
     discovered = list(discover_collections(namespace, collection))
-    latest = sorted(
+    collections = sorted(
         discovered,
         key=lambda i: i['manifest']['collection_info']['version'],
-    )[-1]
+    )
+    latest = collections[-1]
+    oldest = collections[0]
     version = latest['manifest']['collection_info']['version']
     return (
         json.dumps(
@@ -138,7 +143,9 @@ def collection(namespace, collection):
                     namespace=namespace,
                     collection=collection,
                     _external=True
-                )
+                ),
+                "created": oldest['created'],
+                "modified": latest['created'],
             },
             sort_keys=True,
             indent=4

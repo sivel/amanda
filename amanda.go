@@ -41,6 +41,7 @@ type Collection struct {
 	Filename       string
 	Path           string
 	Sha            string
+	Created        string         `json:"created"`
 	CollectionInfo CollectionInfo `json:"collection_info"`
 }
 
@@ -131,6 +132,7 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 			collection.Filename = filename
 			collection.Path = path
 			collection.Sha, shaErr = getSha256Digest(file)
+			collection.Created = fileInfo.ModTime().Format("2006-01-02T15:04:05.000000-0700")
 			if shaErr != nil {
 				continue
 			}
@@ -191,6 +193,7 @@ func (a *Amanda) Collection(c *gin.Context) {
 		return collections[i].CollectionInfo.Version.LessThan(collections[j].CollectionInfo.Version)
 	})
 	latest := collections[len(collections)-1]
+	oldest := collections[0]
 	version := latest.CollectionInfo.Version.String()
 	c.JSON(200, gin.H{
 		"latest_version": gin.H{
@@ -201,6 +204,8 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"namespace": gin.H{
 			"name": namespace,
 		},
+		"modified":     latest.Created,
+		"created":      oldest.Created,
 		"versions_url": fmt.Sprintf("%s/api/v2/collections/%s/%s/versions", getHost(c), namespace, name),
 	})
 }
