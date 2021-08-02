@@ -180,6 +180,8 @@ func (a *Amanda) Collection(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	collections, err := discoverCollections(a.Artifacts, namespace, name, "")
+	var prodCollections []Collection
+
 	if err != nil {
 		c.AbortWithError(500, err)
 		return
@@ -189,17 +191,23 @@ func (a *Amanda) Collection(c *gin.Context) {
 		return
 	}
 
+	for _, collection := range collections {
+		if collection.CollectionInfo.Version.Prerelease() == "" {
+			prodCollections = append(prodCollections, collection)
+		}
+	}
+
 	sort.Slice(collections, func(i, j int) bool {
 		return collections[i].CollectionInfo.Version.LessThan(collections[j].CollectionInfo.Version)
 	})
+
+	sort.Slice(prodCollections, func(i, j int) bool {
+		return prodCollections[i].CollectionInfo.Version.LessThan(prodCollections[j].CollectionInfo.Version)
+	})
+
 	latest := collections[len(collections)-1]
 	oldest := collections[0]
-	version := latest.CollectionInfo.Version.String()
-	c.JSON(200, gin.H{
-		"latest_version": gin.H{
-			"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s", getHost(c), namespace, name, version),
-			"version": version,
-		},
+	out := gin.H{
 		"name": name,
 		"namespace": gin.H{
 			"name": namespace,
@@ -207,7 +215,18 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"modified":     latest.Created,
 		"created":      oldest.Created,
 		"versions_url": fmt.Sprintf("%s/api/v2/collections/%s/%s/versions", getHost(c), namespace, name),
-	})
+	}
+
+	if len(prodCollections) > 0 {
+		latestProd := prodCollections[len(collections)-1]
+		version := latestProd.CollectionInfo.Version.String()
+		out["latest_version"] = gin.H{
+			"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s", getHost(c), namespace, name, version),
+			"version": version,
+		}
+	}
+
+	c.JSON(200, out)
 }
 
 func (a *Amanda) Versions(c *gin.Context) {
@@ -287,9 +306,9 @@ func main() {
 	r.RedirectTrailingSlash = true
 	r.Use(location.Default())
 	r.GET("/api", amanda.Api)
-	r.GET("/api/v2/collections/:namespace/:name", amanda.Collection)
-	r.GET("/api/v2/collections/:namespace/:name/versions", amanda.Versions)
-	r.GET("/api/v2/collections/:namespace/:name/versions/:version", amanda.Version)
+	r.GET("/api/v2/collections/:namespace/:name/", amanda.Collection)
+	r.GET("/api/v2/collections/:namespace/:name/versions/", amanda.Versions)
+	r.GET("/api/v2/collections/:namespace/:name/versions/:version/", amanda.Version)
 	r.Static("/artifacts", amanda.Artifacts)
 	r.Run(":5000")
 }

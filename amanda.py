@@ -5,6 +5,7 @@
 #     (see https://www.gnu.org/licenses/gpl-3.0.txt)
 
 import argparse
+import datetime
 import json
 import os
 import tarfile
@@ -14,8 +15,11 @@ from hashlib import sha256
 
 from flask import Flask, g, request, send_from_directory, url_for
 
+import semver
+
 
 app = Flask(__name__)
+
 
 def get_sha(fobj):
     digest = sha256()
@@ -81,14 +85,14 @@ def discover_collections(namespace=None, name=None, version=None):
 @app.route('/api/v2/collections/download/<filename>')
 def download(filename):
     return send_from_directory(
-        ARTIFACT_BASE,
+        app.config['ARTIFACTS'],
         filename,
         mimetype='application/gzip',
     )
 
 
-@app.route('/api/')
 @app.route('/api')
+@app.route('/api/')
 def api():
     return (
         json.dumps(
@@ -108,45 +112,65 @@ def api():
     )
 
 
-@app.route('/api/v2/collections/<namespace>/<collection>/')
 @app.route('/api/v2/collections/<namespace>/<collection>')
+@app.route('/api/v2/collections/<namespace>/<collection>/')
 def collection(namespace, collection):
     discovered = list(discover_collections(namespace, collection))
+
+    prod_collections = []
+    for c in discovered:
+        v = semver.VersionInfo.parse(
+            c['manifest']['collection_info']['version']
+        )
+        if not v.prerelease:
+            prod_collections.append(c)
+    prod_collections.sort(
+        key=lambda i: semver.VersionInfo.parse(
+            i['manifest']['collection_info']['version']
+        ),
+    )
+
     collections = sorted(
         discovered,
-        key=lambda i: i['manifest']['collection_info']['version'],
+        key=lambda i: semver.VersionInfo.parse(
+            i['manifest']['collection_info']['version']
+        ),
     )
     latest = collections[-1]
     oldest = collections[0]
-    version = latest['manifest']['collection_info']['version']
+
+    out = {
+        "name": collection,
+        "namespace": {
+            "name": namespace
+        },
+        "versions_url": url_for(
+            'versions',
+            namespace=namespace,
+            collection=collection,
+            _external=True
+        ),
+        "created": oldest['created'],
+        "modified": latest['created'],
+    }
+
+    if prod_collections:
+        prod_latest = prod_collections[-1]
+        version = prod_latest['manifest']['collection_info']['version']
+        out["latest_version"] = {
+            'href': url_for(
+                'version',
+                namespace=namespace,
+                collection=collection,
+                version=version,
+                _external=True
+            ),
+            "version": version
+        }
+
     return (
         json.dumps(
-            {
-                "href": request.url,
-                "id": 0,
-                "latest_version": {
-                    'href': url_for(
-                        'version',
-                        namespace=namespace,
-                        collection=collection,
-                        version=version,
-                        _external=True
-                    ),
-                    "version": version
-                },
-                "name": collection,
-                "namespace": {
-                    "name": namespace
-                },
-                "versions_url": url_for(
-                    'versions',
-                    namespace=namespace,
-                    collection=collection,
-                    _external=True
-                ),
-                "created": oldest['created'],
-                "modified": latest['created'],
-            },
+            out,
             sort_keys=True,
             indent=4
         ),
@@ -155,8 +179,8 @@ def collection(namespace, collection):
     )
 
 
-@app.route('/api/v2/collections/<namespace>/<collection>/versions/')
 @app.route('/api/v2/collections/<namespace>/<collection>/versions')
+@app.route('/api/v2/collections/<namespace>/<collection>/versions/')
 def versions(namespace, collection):
     versions = []
     discovered = list(discover_collections(namespace, collection))
@@ -191,8 +215,8 @@ def versions(namespace, collection):
     )
 
 
-@app.route('/api/v2/collections/<namespace>/<collection>/versions/<version>/')
 @app.route('/api/v2/collections/<namespace>/<collection>/versions/<version>')
+@app.route('/api/v2/collections/<namespace>/<collection>/versions/<version>/')
 def version(namespace, collection, version):
     info = next(discover_collections(namespace, collection, version))
 
