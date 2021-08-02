@@ -146,3 +146,5 @@ vendor/
 
 amanda
 amanda_*
+artifacts/
+*.pyx
