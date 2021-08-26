@@ -291,10 +291,12 @@ func (a *Amanda) Version(c *gin.Context) {
 
 func main() {
 	var artifacts string
+	var port string
 	var err error
 	amanda := Amanda{}
 
 	flag.StringVar(&artifacts, "artifacts", "artifacts", "Location of the artifacts dir")
+	flag.StringVar(&port, "port", "5000", "Port")
 	flag.Parse()
 
 	amanda.Artifacts, err = filepath.Abs(artifacts)
@@ -310,5 +312,5 @@ func main() {
 	r.GET("/api/v2/collections/:namespace/:name/versions/", amanda.Versions)
 	r.GET("/api/v2/collections/:namespace/:name/versions/:version/", amanda.Version)
 	r.Static("/artifacts", amanda.Artifacts)
-	r.Run(":5000")
+	r.Run(":" + port)
 }

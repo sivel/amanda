@@ -257,6 +257,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--artifacts', default='artifacts',
                         help='Location of the artifacts dir')
+    parser.add_argument('--port', default='5000', type=int,
+                        help='Port')
     args = parser.parse_args()
     app.config['ARTIFACTS'] = args.artifacts
-    app.run('0.0.0.0', 5000, threaded=True)
+    app.run('0.0.0.0', args.port, threaded=True)
