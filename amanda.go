@@ -124,15 +124,15 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 			if err != nil {
 				continue
 			}
-			defer file.Close()
 			collection, err = getManifest(file)
 			if err != nil {
 				continue
 			}
 			collection.Filename = filename
 			collection.Path = path
-			collection.Sha, shaErr = getSha256Digest(file)
 			collection.Created = fileInfo.ModTime().Format("2006-01-02T15:04:05.000000-0700")
+			collection.Sha, shaErr = getSha256Digest(file)
+			file.Close()
 			if shaErr != nil {
 				continue
 			}
