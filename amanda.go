@@ -155,7 +155,7 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 
 func getHost(c *gin.Context) string {
 	url := location.Get(c)
-	return fmt.Sprintf("%s://%s", url.Scheme, url.Host)
+	return fmt.Sprintf("%s://%s", url.Scheme, c.Request.Host)
 }
 
 type Amanda struct {
@@ -214,14 +214,14 @@ func (a *Amanda) Collection(c *gin.Context) {
 		},
 		"modified":     latest.Created,
 		"created":      oldest.Created,
-		"versions_url": fmt.Sprintf("%s/api/v2/collections/%s/%s/versions", getHost(c), namespace, name),
+		"versions_url": fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/", getHost(c), namespace, name),
 	}
 
 	if len(prodCollections) > 0 {
-		latestProd := prodCollections[len(collections)-1]
+		latestProd := prodCollections[len(prodCollections)-1]
 		version := latestProd.CollectionInfo.Version.String()
 		out["latest_version"] = gin.H{
-			"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s", getHost(c), namespace, name, version),
+			"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s/", getHost(c), namespace, name, version),
 			"version": version,
 		}
 	}
@@ -247,7 +247,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 		versions = append(
 			versions,
 			gin.H{
-				"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s", getHost(c), namespace, name, collection.CollectionInfo.Version.String()),
+				"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s/", getHost(c), namespace, name, collection.CollectionInfo.Version.String()),
 				"version": collection.CollectionInfo.Version.String(),
 			},
 		)
@@ -307,7 +307,7 @@ func main() {
 	r := gin.Default()
 	r.RedirectTrailingSlash = true
 	r.Use(location.Default())
-	r.GET("/api", amanda.Api)
+	r.GET("/api/", amanda.Api)
 	r.GET("/api/v2/collections/:namespace/:name/", amanda.Collection)
 	r.GET("/api/v2/collections/:namespace/:name/versions/", amanda.Versions)
 	r.GET("/api/v2/collections/:namespace/:name/versions/:version/", amanda.Version)
