@@ -116,7 +116,8 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 		var collection Collection
 		var shaErr error
 		filename := fileInfo.Name()
-		if val, ok := discoveryCache[filename][fileInfo.ModTime()]; ok {
+		modtime := fileInfo.ModTime()
+		if val, ok := discoveryCache[filename][modtime]; ok {
 			collection = val
 		} else {
 			path := filepath.Join(artifacts, filename)
@@ -128,18 +129,18 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 			if err != nil {
 				continue
 			}
-			collection.Filename = filename
-			collection.Path = path
-			collection.Created = fileInfo.ModTime().Format("2006-01-02T15:04:05.000000-0700")
 			collection.Sha, shaErr = getSha256Digest(file)
 			file.Close()
 			if shaErr != nil {
 				continue
 			}
+			collection.Filename = filename
+			collection.Path = path
+			collection.Created = modtime.Format("2006-01-02T15:04:05.000000-0700")
 			if _, ok := discoveryCache[filename]; !ok {
 				discoveryCache[filename] = make(map[time.Time]Collection)
 			}
-			discoveryCache[filename][fileInfo.ModTime()] = collection
+			discoveryCache[filename][modtime] = collection
 		}
 
 		if collection.Matches(namespace, name, version) {
@@ -174,6 +175,76 @@ func (a *Amanda) Api(c *gin.Context) {
 		"current_version": "v1",
 		"description":     "AMANDA GALAXY REST API",
 	})
+}
+
+func (a *Amanda) Collections(c *gin.Context) {
+	collections, err := discoverCollections(a.Artifacts, "", "", "")
+	if err != nil {
+		c.AbortWithError(500, err)
+		return
+	}
+
+	seen := map[string]string{}
+	var results []gin.H
+
+	for _, collection := range collections {
+		namespace := collection.CollectionInfo.Namespace
+		name := collection.CollectionInfo.Name
+		seenKey := namespace + "." + name
+
+		if _, ok := seen[seenKey]; ok {
+			continue
+		} else {
+			seen[seenKey] = ""
+		}
+
+		versions, err := discoverCollections(a.Artifacts, namespace, name, "")
+		if err != nil {
+			c.AbortWithError(500, err)
+			return
+		}
+		var prodVersions []Collection
+		for _, version := range versions {
+			if collection.CollectionInfo.Version.Prerelease() == "" {
+				prodVersions = append(prodVersions, version)
+			}
+		}
+		sort.Slice(versions, func(i, j int) bool {
+			return versions[i].CollectionInfo.Version.LessThan(versions[j].CollectionInfo.Version)
+		})
+
+		sort.Slice(prodVersions, func(i, j int) bool {
+			return prodVersions[i].CollectionInfo.Version.LessThan(prodVersions[j].CollectionInfo.Version)
+		})
+
+		latest := versions[len(versions)-1]
+		oldest := versions[0]
+		result := gin.H{
+			"name": name,
+			"namespace": gin.H{
+				"name": namespace,
+			},
+			"modified":     latest.Created,
+			"created":      oldest.Created,
+			"versions_url": fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/", getHost(c), namespace, name),
+		}
+
+		if len(prodVersions) > 0 {
+			latestProd := prodVersions[len(prodVersions)-1]
+			latestVersion := latestProd.CollectionInfo.Version.String()
+			result["latest_version"] = gin.H{
+				"href":    fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s/", getHost(c), namespace, name, latestVersion),
+				"version": latestVersion,
+			}
+		}
+		results = append(results, result)
+	}
+
+	out := gin.H{
+		"results": results,
+	}
+
+	c.JSON(200, out)
 }
 
 func (a *Amanda) Collection(c *gin.Context) {
@@ -308,6 +379,7 @@ func main() {
 	r.RedirectTrailingSlash = true
 	r.Use(location.Default())
 	r.GET("/api/", amanda.Api)
+	r.GET("/api/v2/collections/", amanda.Collections)
 	r.GET("/api/v2/collections/:namespace/:name/", amanda.Collection)
 	r.GET("/api/v2/collections/:namespace/:name/versions/", amanda.Versions)
 	r.GET("/api/v2/collections/:namespace/:name/versions/:version/", amanda.Version)

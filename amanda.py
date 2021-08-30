@@ -114,6 +114,84 @@ def api():
     )
 
 
+@app.route('/api/v2/collections')
+@app.route('/api/v2/collections/')
+def collections():
+    discovered = discover_collections()
+
+    seen = set()
+    out = {
+        'results': []
+    }
+
+    for collection in discovered:
+        namespace = collection['manifest']['collection_info']['namespace']
+        name = collection['manifest']['collection_info']['name']
+        seen_key = f'{namespace}.{name}'
+
+        if seen_key in seen:
+            continue
+        else:
+            seen.add(seen_key)
+
+        versions = list(discover_collections(namespace, name))
+        prod_versions = []
+        for version in versions:
+            v = semver.VersionInfo.parse(
+                version['manifest']['collection_info']['version']
+            )
+            if not v.prerelease:
+                prod_versions.append(version)
+        prod_versions.sort(
+            key=lambda i: semver.VersionInfo.parse(
+                i['manifest']['collection_info']['version']
+            ),
+        )
+
+        latest = versions[-1]
+        oldest = versions[0]
+
+        result = {
+            "name": name,
+            "namespace": {
+                "name": namespace
+            },
+            "versions_url": url_for(
+                'versions',
+                namespace=namespace,
+                collection=name,
+                _external=True
+            ),
+            "created": oldest['created'],
+            "modified": latest['created'],
+        }
+
+        if prod_versions:
+            prod_latest = prod_versions[-1]
+            latest_version = prod_latest['manifest']['collection_info']['version']
+            result["latest_version"] = {
+                'href': url_for(
+                    'version',
+                    namespace=namespace,
+                    collection=name,
+                    version=latest_version,
+                    _external=True
+                ),
+                "version": latest_version
+            }
+
+        out['results'].append(result)
+
+    return (
+        json.dumps(
+            out,
+            sort_keys=True,
+            indent=4
+        ),
+        200,
+        {'Content-Type': 'application/json'}
+    )
+
 @app.route('/api/v2/collections/<namespace>/<collection>')
 @app.route('/api/v2/collections/<namespace>/<collection>/')
 def collection(namespace, collection):
