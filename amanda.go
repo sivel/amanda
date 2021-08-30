@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Masterminds/semver"
+	"github.com/Masterminds/semver/v3"
 	"github.com/gin-contrib/location"
 	"github.com/gin-gonic/gin"
 )
@@ -91,13 +91,16 @@ func getManifest(file *os.File) (Collection, error) {
 			return collection, err
 		}
 
-		if strings.ToLower(header.Name) == "manifest.json" {
+		if strings.ToLower(header.Name) == "manifest.json" || strings.ToLower(header.Name) == "./manifest.json" {
 			data := make([]byte, header.Size)
 			_, err := tarReader.Read(data)
 			if err != io.EOF && err != nil {
 				continue
 			}
-			json.Unmarshal(data, &collection)
+			err = json.Unmarshal(data, &collection)
+			if err != nil {
+				return collection, err
+			}
 			break
 		}
 	}
@@ -178,37 +181,36 @@ func (a *Amanda) Api(c *gin.Context) {
 }
 
 func (a *Amanda) Collections(c *gin.Context) {
-	collections, err := discoverCollections(a.Artifacts, "", "", "")
+	discovered, err := discoverCollections(a.Artifacts, "", "", "")
 	if err != nil {
 		c.AbortWithError(500, err)
 		return
 	}
 
-	seen := map[string]string{}
 	var results []gin.H
+	collections := make(map[string][]Collection)
 
-	for _, collection := range collections {
+	for _, collection := range discovered {
 		namespace := collection.CollectionInfo.Namespace
 		name := collection.CollectionInfo.Name
 		seenKey := namespace + "." + name
 
-		if _, ok := seen[seenKey]; ok {
-			continue
-		} else {
-			seen[seenKey] = ""
+		if _, ok := collections[seenKey]; !ok {
+			collections[seenKey] = make([]Collection, 0)
 		}
 
-		versions, err := discoverCollections(a.Artifacts, namespace, name, "")
-		if err != nil {
-			c.AbortWithError(500, err)
-			return
-		}
+		collections[seenKey] = append(collections[seenKey], collection)
+		continue
+	}
+
+	for _, versions := range collections {
 		var prodVersions []Collection
 		for _, version := range versions {
-			if collection.CollectionInfo.Version.Prerelease() == "" {
+			if version.CollectionInfo.Version.Prerelease() == "" {
 				prodVersions = append(prodVersions, version)
 			}
 		}
+
 		sort.Slice(versions, func(i, j int) bool {
 			return versions[i].CollectionInfo.Version.LessThan(versions[j].CollectionInfo.Version)
 		})
@@ -219,6 +221,10 @@ func (a *Amanda) Collections(c *gin.Context) {
 
 		latest := versions[len(versions)-1]
 		oldest := versions[0]
+
+		namespace := latest.CollectionInfo.Namespace
+		name := latest.CollectionInfo.Name
+
 		result := gin.H{
 			"name": name,
 			"namespace": gin.H{
@@ -250,34 +256,34 @@ func (a *Amanda) Collections(c *gin.Context) {
 func (a *Amanda) Collection(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	collections, err := discoverCollections(a.Artifacts, namespace, name, "")
+	discovered, err := discoverCollections(a.Artifacts, namespace, name, "")
 	var prodCollections []Collection
 
 	if err != nil {
 		c.AbortWithError(500, err)
 		return
 	}
-	if len(collections) == 0 {
+	if len(discovered) == 0 {
 		a.NotFound(c)
 		return
 	}
 
-	for _, collection := range collections {
+	for _, collection := range discovered {
 		if collection.CollectionInfo.Version.Prerelease() == "" {
 			prodCollections = append(prodCollections, collection)
 		}
 	}
 
-	sort.Slice(collections, func(i, j int) bool {
-		return collections[i].CollectionInfo.Version.LessThan(collections[j].CollectionInfo.Version)
+	sort.Slice(discovered, func(i, j int) bool {
+		return discovered[i].CollectionInfo.Version.LessThan(discovered[j].CollectionInfo.Version)
 	})
 
 	sort.Slice(prodCollections, func(i, j int) bool {
 		return prodCollections[i].CollectionInfo.Version.LessThan(prodCollections[j].CollectionInfo.Version)
 	})
 
-	latest := collections[len(collections)-1]
-	oldest := collections[0]
+	latest := discovered[len(discovered)-1]
+	oldest := discovered[0]
 	out := gin.H{
 		"name": name,
 		"namespace": gin.H{
@@ -303,18 +309,18 @@ func (a *Amanda) Collection(c *gin.Context) {
 func (a *Amanda) Versions(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	collections, err := discoverCollections(a.Artifacts, namespace, name, "")
+	discovered, err := discoverCollections(a.Artifacts, namespace, name, "")
 	if err != nil {
 		c.AbortWithError(500, err)
 		return
 	}
-	if len(collections) == 0 {
+	if len(discovered) == 0 {
 		a.NotFound(c)
 		return
 	}
 
 	var versions []gin.H
-	for _, collection := range collections {
+	for _, collection := range discovered {
 		versions = append(
 			versions,
 			gin.H{
@@ -332,16 +338,16 @@ func (a *Amanda) Version(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	version := c.Params.ByName("version")
-	collections, err := discoverCollections(a.Artifacts, namespace, name, version)
+	discovered, err := discoverCollections(a.Artifacts, namespace, name, version)
 	if err != nil {
 		c.AbortWithError(500, err)
 		return
 	}
-	if len(collections) == 0 {
+	if len(discovered) == 0 {
 		a.NotFound(c)
 		return
 	}
-	collection := collections[0]
+	collection := discovered[0]
 
 	c.JSON(200, gin.H{
 		"artifact": gin.H{

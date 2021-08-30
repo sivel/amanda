@@ -61,8 +61,15 @@ def discover_collections(namespace=None, name=None, version=None):
             with open(path, 'rb') as f:
                 try:
                     t = tarfile.open(mode='r:gz', fileobj=f)
-                    with t.extractfile('MANIFEST.json') as m_f:
-                        info['manifest'] = manifest = json.load(m_f)
+                    for candidate in ('MANIFEST.json', './MANIFEST.json'):
+                        try:
+                            with t.extractfile('MANIFEST.json') as m_f:
+                                info['manifest'] = manifest = json.load(m_f)
+                            break
+                        except KeyError:
+                            pass
+                    else:
+                        continue
                 except Exception:
                     continue
 
@@ -106,8 +113,6 @@ def api():
                 'current_version': 'v1',
                 'description': 'GALAXY REST API',
             },
-            sort_keys=True,
-            indent=4
         ),
         200,
         {'Content-Type': 'application/json'}
@@ -119,29 +124,31 @@ def api():
 def collections():
     discovered = discover_collections()
 
-    seen = set()
+    collections = defaultdict(list)
     out = {
         'results': []
     }
 
     for collection in discovered:
-        namespace = collection['manifest']['collection_info']['namespace']
-        name = collection['manifest']['collection_info']['name']
-        seen_key = f'{namespace}.{name}'
+        ci = collection['manifest']['collection_info']
+        fq = (ci['namespace'], ci['name'])
+        collections[fq].append(collection)
 
-        if seen_key in seen:
-            continue
-        else:
-            seen.add(seen_key)
-
-        versions = list(discover_collections(namespace, name))
+    for (namespace, name), versions in collections.items():
         prod_versions = []
         for version in versions:
             v = semver.VersionInfo.parse(
-                version['manifest']['collection_info']['version']
+               version['manifest']['collection_info']['version']
             )
             if not v.prerelease:
-                prod_versions.append(version)
+               prod_versions.append(version)
+
+        versions.sort(
+            key=lambda i: semver.VersionInfo.parse(
+                i['manifest']['collection_info']['version']
+            ),
+        )
+
         prod_versions.sort(
             key=lambda i: semver.VersionInfo.parse(
                 i['manifest']['collection_info']['version']
@@ -183,11 +190,7 @@ def collections():
         out['results'].append(result)
 
     return (
-        json.dumps(
-            out,
-            sort_keys=True,
-            indent=4
-        ),
+        json.dumps(out),
         200,
         {'Content-Type': 'application/json'}
     )
@@ -252,11 +255,7 @@ def collection(namespace, collection):
         }
 
     return (
-        json.dumps(
-            out,
-            sort_keys=True,
-            indent=4
-        ),
+        json.dumps(out),
         200,
         {'Content-Type': 'application/json'}
     )
@@ -294,8 +293,6 @@ def versions(namespace, collection):
                 'previous': None,
                 'results': versions,
             },
-            sort_keys=True,
-            indent=4
         ),
         200,
         {'Content-Type': 'application/json'}
@@ -335,8 +332,6 @@ def version(namespace, collection, version):
                 'metadata': info['manifest']['collection_info'],
                 'version': version
             },
-            sort_keys=True,
-            indent=4
         ),
         200,
         {'Content-Type': 'application/json'}
