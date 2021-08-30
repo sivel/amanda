@@ -13,7 +13,7 @@ from collections import defaultdict
 from functools import partial
 from hashlib import sha256
 
-from flask import Flask, g, request, send_from_directory, url_for
+from flask import Flask, abort, g, request, send_from_directory, url_for
 
 import semver
 
@@ -72,6 +72,8 @@ def discover_collections(namespace=None, name=None, version=None):
                 info['sha'] = get_sha(f)
 
                 g.discovery_cache[filename][stat.st_mtime] = info
+        else:
+            ci = info['manifest']['collection_info']
 
         match = (
             not all((namespace, name)) or
@@ -116,6 +118,9 @@ def api():
 @app.route('/api/v2/collections/<namespace>/<collection>/')
 def collection(namespace, collection):
     discovered = list(discover_collections(namespace, collection))
+
+    if not discovered:
+        abort(404)
 
     prod_collections = []
     for c in discovered:
@@ -184,6 +189,10 @@ def collection(namespace, collection):
 def versions(namespace, collection):
     versions = []
     discovered = list(discover_collections(namespace, collection))
+
+    if not discovered:
+        abort(404)
+
     for info in discovered:
         version = info['manifest']['collection_info']['version']
         versions.append(
@@ -218,7 +227,10 @@ def versions(namespace, collection):
 @app.route('/api/v2/collections/<namespace>/<collection>/versions/<version>')
 @app.route('/api/v2/collections/<namespace>/<collection>/versions/<version>/')
 def version(namespace, collection, version):
-    info = next(discover_collections(namespace, collection, version))
+    try:
+        info = next(discover_collections(namespace, collection, version))
+    except StopIteration:
+        abort(404)
 
     return (
         json.dumps(
