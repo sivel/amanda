@@ -6,8 +6,10 @@
 
 import argparse
 import datetime
+import gzip
 import json
 import os
+import sys
 import tarfile
 from collections import defaultdict
 from functools import partial
@@ -19,6 +21,38 @@ import semver
 
 
 app = Flask(__name__)
+
+ENCODING = sys.getfilesystemencoding()
+
+
+def iter_tar(f):
+    while True:
+        header = f.read(512)
+        if not header:
+            break
+
+        typ = header[156:157]
+        name = tarfile.nts(header[0:100], ENCODING, 'surrogateescape')
+        prefix = tarfile.nts(header[345:500], ENCODING, 'surrogateescape')
+
+        if prefix and typ not in tarfile.GNU_TYPES:
+            name = f'{prefix}/{name}'
+
+        if not name:
+            continue
+
+        size = tarfile.nti(header[124:136])
+        if size:
+            contents = tarfile.nts(f.read(size), ENCODING, 'surrogateescape')
+        else:
+            contents = None
+
+        if name != '././@PaxHeader':
+            yield name, contents
+
+        mod = f.tell() % 512
+        if mod:
+            f.seek(512 - mod, 1)
 
 
 def get_sha(fobj):
@@ -58,27 +92,23 @@ def discover_collections(namespace=None, name=None, version=None):
                 ).isoformat(),
             }
 
-            with open(path, 'rb') as f:
-                try:
-                    t = tarfile.open(mode='r:gz', fileobj=f)
-                    for candidate in ('MANIFEST.json', './MANIFEST.json'):
-                        try:
-                            with t.extractfile('MANIFEST.json') as m_f:
-                                info['manifest'] = manifest = json.load(m_f)
+            try:
+                with gzip.open(path, 'rb') as f:
+                    for filename, contents in iter_tar(f):
+                        f_lower = filename.lower()
+                        if f_lower in ('manifest.json', './manifest.json'):
                             break
-                        except KeyError:
-                            pass
                     else:
                         continue
-                except Exception:
-                    continue
+            except gzip.BadGzipFile:
+                continue
 
-                ci = manifest['collection_info']
+            info['manifest'] = json.loads(contents)
 
-                f.seek(0)
+            with open(path, 'rb') as f:
                 info['sha'] = get_sha(f)
 
-                g.discovery_cache[filename][stat.st_mtime] = info
+            g.discovery_cache[filename][stat.st_mtime] = info
         else:
             ci = info['manifest']['collection_info']
 
@@ -141,7 +171,7 @@ def collections():
                version['manifest']['collection_info']['version']
             )
             if not v.prerelease:
-               prod_versions.append(version)
+                prod_versions.append(version)
 
         versions.sort(
             key=lambda i: semver.VersionInfo.parse(
@@ -175,7 +205,9 @@ def collections():
 
         if prod_versions:
             prod_latest = prod_versions[-1]
-            latest_version = prod_latest['manifest']['collection_info']['version']
+            latest_version = (
+                prod_latest['manifest']['collection_info']['version']
+            )
             result["latest_version"] = {
                 'href': url_for(
                     'version',
@@ -194,6 +226,7 @@ def collections():
         200,
         {'Content-Type': 'application/json'}
     )
+
 
 @app.route('/api/v2/collections/<namespace>/<collection>')
 @app.route('/api/v2/collections/<namespace>/<collection>/')
