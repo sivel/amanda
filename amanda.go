@@ -303,12 +303,34 @@ func (a *Amanda) Collection(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, out)
+	c.JSON(http.StatusOK, out)
+}
+
+func (a *Amanda) User(c *gin.Context) {
+
+	//TODO: populate from http authorized user
+	c.JSON(http.StatusOK, gin.H{
+			"id": nil,
+			"url": "",
+			"related": "{}",
+			"summary_fields": "{}",
+			"created": nil,
+			"modified": nil,
+			"username": "",
+			"staff": false,
+			"authenticated": false,
+			"primary_email": nil,
+			"active": nil,
+	})
+	return
 }
 
 func (a *Amanda) Versions(c *gin.Context) {
+	// get params
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
+
+	// search for matching collections
 	discovered, err := discoverCollections(a.Artifacts, namespace, name, "")
 	if err != nil {
 		c.AbortWithError(500, err)
@@ -319,6 +341,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 		return
 	}
 
+	// construct display data from matches
 	var versions []gin.H
 	for _, collection := range discovered {
 		versions = append(
@@ -335,9 +358,12 @@ func (a *Amanda) Versions(c *gin.Context) {
 }
 
 func (a *Amanda) Version(c *gin.Context) {
+	// get params
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	version := c.Params.ByName("version")
+
+	// find matching collection
 	discovered, err := discoverCollections(a.Artifacts, namespace, name, version)
 	if err != nil {
 		c.AbortWithError(500, err)
@@ -347,9 +373,10 @@ func (a *Amanda) Version(c *gin.Context) {
 		a.NotFound(c)
 		return
 	}
-	collection := discovered[0]
 
-	c.JSON(200, gin.H{
+	// use first(only) collection to construct display data
+	collection := discovered[0]
+	c.JSON(http.StatusOK, gin.H{
 		"artifact": gin.H{
 			"filename": collection.Filename,
 			"sha256":   collection.Sha,
@@ -367,28 +394,57 @@ func (a *Amanda) Version(c *gin.Context) {
 }
 
 func main() {
+
 	var artifacts string
 	var port string
 	var err error
-	amanda := Amanda{}
 
+	// args parsing
 	flag.StringVar(&artifacts, "artifacts", "artifacts", "Location of the artifacts dir")
-	flag.StringVar(&port, "port", "5000", "Port")
+	flag.StringVar(&port, "port", "5001", "Port")
+	flag.IntVar(&debug, "debug", 0, "debug level")
+	flag.BoolVar(&roles, "roles", false, "Also support roles (requires /collections and /roles subdirs under artfiacts dir)")
 	flag.Parse()
 
+	// init base info
+	amanda := Amanda{}
+	amanda.Debug = debug
+	amanda.DoRoles = roles
 	amanda.Artifacts, err = filepath.Abs(artifacts)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// setup web stuff
 	r := gin.Default()
 	r.RedirectTrailingSlash = true
 	r.Use(location.Default())
 	r.GET("/api/", amanda.Api)
-	r.GET("/api/v2/collections/", amanda.Collections)
-	r.GET("/api/v2/collections/:namespace/:name/", amanda.Collection)
-	r.GET("/api/v2/collections/:namespace/:name/versions/", amanda.Versions)
-	r.GET("/api/v2/collections/:namespace/:name/versions/:version/", amanda.Version)
-	r.Static("/artifacts", amanda.Artifacts)
+
+	v1 := r.Group("/api/v1")
+	{
+		v1.GET("/", amanda.V1) // HEAD, OPTIONS
+		v1.GET("/me", amanda.User)  // HEAD, OPTIONS
+		v1.GET("/roles", amanda.Roles)
+		v1.GET("/roles/:namespace", amanda.Roles)
+		//v1.GET("/roles/:namespace/:name", amanda.Role)
+		//v1.GET("/roles/:namespace/:name/versions/", amanda.RoleVersions)
+		//v1.GET("/roles/:namespace/:name/versions/:version/", amanda.RoleVersion)
+	}
+
+	v2 := r.Group("/api/v2")
+	{
+		v2.GET("/", amanda.V2)
+		v2.GET("/collections/", amanda.Collections)
+		v2.GET("/collections/:namespace/", amanda.Collections)
+		v2.GET("/collections/:namespace/:name/", amanda.Collection)
+		v2.GET("/collections/:namespace/:name/versions/", amanda.Versions)
+		v2.GET("/collections/:namespace/:name/versions/:version/", amanda.Version)
+	}
+
+	r.GET("/artifacts/:filename", amanda.ArtifactFile)  // backwards compat, defaults to type == collection
+	r.GET("/artifacts/:filename/:type", amanda.ArtifactFile)
+
+	// start the webapp!
 	r.Run(":" + port)
 }
