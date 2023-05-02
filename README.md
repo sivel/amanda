@@ -36,3 +36,16 @@ A simple web application, to mimic the V2 API endpoints for Ansible Galaxy Colle
     ```
     ansible-galaxy collection install -s http://hostname:5000/api namespace.collection
     ```
+
+## Signatures
+
+Only the Go version supports signatures currently. Along side the `.tar.gz` artifact for a collection, create a file with the same base with a `.asc` extension.
+
+A quick example on creating and verifying the signature:
+
+```
+cd collections/ansible_collections/namespace/name
+ansible-galaxy collection build
+tar -Oxzf namespace-name-1.0.0.tar.gz MANIFEST.json | gpg --output namespace-name-1.0.0.asc --detach-sign --armor --local-user email@example.org -
+tar -Oxzf namespace-name-1.0.0.tar.gz MANIFEST.json | gpg --verify namespace-name-1.0.0.asc -
+```

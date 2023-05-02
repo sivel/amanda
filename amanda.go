@@ -30,6 +30,10 @@ var NotFound = gin.H{
 	"message": "Not found.",
 }
 
+type CollectionSignature struct {
+	Signature string `json:"signature"`
+}
+
 type CollectionInfo struct {
 	Namespace    string          `json:"namespace"`
 	Name         string          `json:"name"`
@@ -43,6 +47,7 @@ type Collection struct {
 	Sha            string
 	Created        string         `json:"created"`
 	CollectionInfo CollectionInfo `json:"collection_info"`
+	Signatures     []CollectionSignature
 }
 
 var discoveryCache = make(map[string]map[time.Time]Collection)
@@ -119,6 +124,12 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 		var collection Collection
 		var shaErr error
 		filename := fileInfo.Name()
+		extension := filename[len(filename)-7:]
+		if extension != ".tar.gz" {
+			continue
+		}
+		stem := filename[:len(filename)-7]
+		signatureFilename := stem + ".asc"
 		modtime := fileInfo.ModTime()
 		if val, ok := discoveryCache[filename][modtime]; ok {
 			collection = val
@@ -140,6 +151,11 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 			collection.Filename = filename
 			collection.Path = path
 			collection.Created = modtime.Format("2006-01-02T15:04:05.000000-0700")
+			signature, err := os.ReadFile(filepath.Join(artifacts, signatureFilename))
+			if err == nil {
+				collectionSignature := CollectionSignature{string(signature)}
+				collection.Signatures = append(collection.Signatures, collectionSignature)
+			}
 			if _, ok := discoveryCache[filename]; !ok {
 				discoveryCache[filename] = make(map[time.Time]Collection)
 			}
@@ -292,6 +308,7 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"modified":     latest.Created,
 		"created":      oldest.Created,
 		"versions_url": fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/", getHost(c), namespace, name),
+		"href":         fmt.Sprintf("%s/api/v2/collections/%s/%s/", getHost(c), namespace, name),
 	}
 
 	if len(prodCollections) > 0 {
@@ -363,6 +380,8 @@ func (a *Amanda) Version(c *gin.Context) {
 		"download_url": fmt.Sprintf("%s/artifacts/%s", getHost(c), collection.Filename),
 		"metadata":     collection.CollectionInfo,
 		"version":      version,
+		"signatures":   collection.Signatures,
+		"href":         fmt.Sprintf("%s/api/v2/collections/%s/%s/versions/%s/", getHost(c), namespace, name, version),
 	})
 }
 
