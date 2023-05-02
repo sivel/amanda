@@ -22,6 +22,8 @@ A simple web application, to mimic the V2 API endpoints for Ansible Galaxy Colle
 
 ### Python
 
+This is no longer maintained, but this branch is kept for history.
+
 1. Download `amanda.py` and `requirements.txt`
 1. `pip install -r requirements.txt`
 1. Create a directory to hold the artifacts, which by default is named `artifacts` and lives in the current working directory
