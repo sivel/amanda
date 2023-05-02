@@ -191,8 +191,7 @@ func (a *Amanda) Api(c *gin.Context) {
 		"available_versions": gin.H{
 			"v3": "v3/",
 		},
-		"current_version": "v3",
-		"description":     "AMANDA GALAXY REST API",
+		"description": "Amanda Galaxy REST API",
 	})
 }
 
