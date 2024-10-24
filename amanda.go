@@ -23,6 +23,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/gin-contrib/location"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 var NotFound = gin.H{
@@ -41,13 +42,18 @@ type CollectionInfo struct {
 	Dependencies gin.H           `json:"dependencies"`
 }
 
+type CollectionRuntime struct {
+	RequiresAnsible string `json:"requires_ansible" yaml:"requires_ansible"`
+}
+
 type Collection struct {
-	Filename       string
-	Path           string
-	Sha            string
-	Created        string         `json:"created"`
-	CollectionInfo CollectionInfo `json:"collection_info"`
-	Signatures     []CollectionSignature
+	Filename        string
+	Path            string
+	Sha             string
+	Created         string         `json:"created"`
+	CollectionInfo  CollectionInfo `json:"collection_info"`
+	Signatures      []CollectionSignature
+	RequiresAnsible string `json:"requires_ansible"`
 }
 
 var discoveryCache = make(map[string]map[time.Time]Collection)
@@ -112,6 +118,43 @@ func getManifest(file *os.File) (Collection, error) {
 	return collection, nil
 }
 
+func getRuntime(file *os.File) (CollectionRuntime, error) {
+	defer file.Seek(0, 0)
+
+	var runtime CollectionRuntime
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return runtime, err
+	}
+	tarReader := tar.NewReader(gzReader)
+	for {
+		header, err := tarReader.Next()
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return runtime, err
+		}
+
+		if strings.ToLower(header.Name) == "meta/runtime.yml" || strings.ToLower(header.Name) == "./meta/runtime.yml" {
+			data := make([]byte, header.Size)
+			_, err := tarReader.Read(data)
+			if err != io.EOF && err != nil {
+				continue
+			}
+			err = yaml.Unmarshal(data, &runtime)
+			if err != nil {
+				return runtime, err
+			}
+			break
+		}
+	}
+	return runtime, nil
+}
+
 func discoverCollections(artifacts string, namespace string, name string, version string) ([]Collection, error) {
 	var collections []Collection
 
@@ -122,7 +165,7 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 
 	for _, fileInfo := range files {
 		var collection Collection
-		var shaErr error
+		var runtime CollectionRuntime
 		filename := fileInfo.Name()
 		extension := filename[len(filename)-7:]
 		if extension != ".tar.gz" {
@@ -141,16 +184,25 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 			}
 			collection, err = getManifest(file)
 			if err != nil {
+				file.Close()
 				continue
 			}
-			collection.Sha, shaErr = getSha256Digest(file)
+			collection.Sha, err = getSha256Digest(file)
+			if err != nil {
+				file.Close()
+				continue
+			}
+
+			runtime, err = getRuntime(file)
 			file.Close()
-			if shaErr != nil {
-				continue
+			if err == nil {
+				collection.RequiresAnsible = runtime.RequiresAnsible
 			}
+
 			collection.Filename = filename
 			collection.Path = path
 			collection.Created = modtime.Format("2006-01-02T15:04:05.000000-0700")
+
 			signature, err := os.ReadFile(filepath.Join(artifacts, signatureFilename))
 			if err == nil {
 				collectionSignature := CollectionSignature{string(signature)}
@@ -376,11 +428,12 @@ func (a *Amanda) Version(c *gin.Context) {
 		"namespace": gin.H{
 			"name": namespace,
 		},
-		"download_url": fmt.Sprintf("%s/artifacts/%s", getHost(c), collection.Filename),
-		"metadata":     collection.CollectionInfo,
-		"version":      version,
-		"signatures":   collection.Signatures,
-		"href":         fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", getHost(c), namespace, name, version),
+		"download_url":     fmt.Sprintf("%s/artifacts/%s", getHost(c), collection.Filename),
+		"metadata":         collection.CollectionInfo,
+		"version":          version,
+		"signatures":       collection.Signatures,
+		"href":             fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", getHost(c), namespace, name, version),
+		"requires_ansible": collection.RequiresAnsible,
 	})
 }
 
