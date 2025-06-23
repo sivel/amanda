@@ -1,0 +1,41 @@
+name: Build Amanda Binaries
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        os: [linux, darwin, freebsd]
+        arch: [amd64, arm64]
+
+    env:
+      CGO_ENABLED: 0
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Build for ${{ matrix.os }} / ${{ matrix.arch }}
+      run: |
+        go build -o "amanda_${GOOS}_${GOARCH}" ./...
+      env:
+        GOOS: ${{ matrix.os }}
+        GOARCH: ${{ matrix.arch }}
+
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: amanda_${{ matrix.os }}_${{ matrix.arch }}
+        path: amanda_${{ matrix.os }}_${{ matrix.arch }}
