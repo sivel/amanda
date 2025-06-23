@@ -4,6 +4,8 @@ A simple web application, to mimic the v3 API endpoints for Ansible Galaxy Colle
 
 ## Usage
 
+### Binary
+
 1. `go install github.com/sivel/amanda@latest` (You can use the `GOBIN` env variable to install to a custom location). Binary artifacts can also be found for a variety of OSes and architectures at https://github.com/sivel/amanda/actions/workflows/build.yml
 1. Create a directory to hold the artifacts, which by default is named `artifacts` and lives in the current working directory
 1. Drop `ansible-galaxy collection build/download` artifacts in the `artifacts` directory
@@ -17,6 +19,12 @@ A simple web application, to mimic the v3 API endpoints for Ansible Galaxy Colle
     ```
     ansible-galaxy collection install -s http://hostname:5000/api namespace.collection
     ```
+
+### Docker
+
+```
+docker run --rm -d -p 5000:5000 -v /path/to/artifacts:/artifacts sivel/amanda
+```
 
 ## Signatures
 
