@@ -1,10 +1,10 @@
 # amanda
 
-A simple web application, to mimic the v2 API endpoints for Ansible Galaxy Collections, with no database, just a directory with artifacts
+A simple web application, to mimic the v3 API endpoints for Ansible Galaxy Collections, with no database, just a directory with artifacts
 
 ## Usage
 
-1. `go install github.com/sivel/amanda@latest` (You can use the `GOBIN` env variable to install to a custom location)
+1. `go install github.com/sivel/amanda@latest` (You can use the `GOBIN` env variable to install to a custom location). Binary artifacts can also be found for a variety of OSes and architectures at https://github.com/sivel/amanda/actions/workflows/build.yml
 1. Create a directory to hold the artifacts, which by default is named `artifacts` and lives in the current working directory
 1. Drop `ansible-galaxy collection build/download` artifacts in the `artifacts` directory
 1. Run the app:
