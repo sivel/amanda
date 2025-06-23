@@ -23,7 +23,7 @@ A simple web application, to mimic the v3 API endpoints for Ansible Galaxy Colle
 ### Docker
 
 ```
-docker run --rm -d -p 5000:5000 -v /path/to/artifacts:/artifacts sivel/amanda
+docker run --rm -d -p 5000:5000 -v /path/to/artifacts:/artifacts ghcr.io/sivel/amanda:latest
 ```
 
 ## Signatures
