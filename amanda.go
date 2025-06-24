@@ -320,13 +320,16 @@ func (a *Amanda) Collections(c *gin.Context) {
 			"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name),
 		}
 
+		var latestVersion string
 		if len(prodVersions) > 0 {
 			latestProd := prodVersions[len(prodVersions)-1]
-			latestVersion := latestProd.CollectionInfo.Version.String()
-			result["highest_version"] = gin.H{
-				"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, latestVersion),
-				"version": latestVersion,
-			}
+			latestVersion = latestProd.CollectionInfo.Version.String()
+		} else {
+			latestVersion = latest.CollectionInfo.Version.String()
+		}
+		result["highest_version"] = gin.H{
+			"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, latestVersion),
+			"version": latestVersion,
 		}
 		results = append(results, result)
 	}
@@ -378,13 +381,16 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"href":         fmt.Sprintf("%s/api/v3/collections/%s/%s/", a.getHost(c), namespace, name),
 	}
 
+	var latestVersion string
 	if len(prodCollections) > 0 {
 		latestProd := prodCollections[len(prodCollections)-1]
-		version := latestProd.CollectionInfo.Version.String()
-		out["highest_version"] = gin.H{
-			"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version),
-			"version": version,
-		}
+		latestVersion = latestProd.CollectionInfo.Version.String()
+	} else {
+		latestVersion = latest.CollectionInfo.Version.String()
+	}
+	out["highest_version"] = gin.H{
+		"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, latestVersion),
+		"version": latestVersion,
 	}
 
 	c.JSON(200, out)
