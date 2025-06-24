@@ -1,4 +1,4 @@
-// (c) 2021 Matt Martz <matt@sivel.net>
+// (c) Matt Martz <matt@sivel.net>
 // GNU General Public License v3.0+
 //     (see https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -479,7 +479,7 @@ func main() {
 	r.RedirectTrailingSlash = true
 	r.Use(location.Default())
 	if ui {
-		if gin.Mode() == gin.ReleaseMode {
+		if _, err := os.Stat("./index.html"); err != nil || gin.Mode() == gin.ReleaseMode {
 			r.GET("/", amanda.IndexHTML)
 			r.GET("/index.html", amanda.IndexHTML)
 		} else {
