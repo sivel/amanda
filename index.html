@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <title x-text="pageTitle">Collections Browser</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/compare-versions/lib/umd/index.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="p-4 sm:p-6" x-data="collectionsApp()" x-init="init()">
+
+    <div x-show="view === 'list'">
+        <div class="max-w-7xl mx-auto px-4 mb-4">
+            <h1 class="text-2xl font-bold mb-4">Collections</h1>
+
+            <div class="mb-2 flex items-center space-x-2 text-gray-700 font-medium">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                          d="M3 4a1 1 0 0 1 1-1h16a1 1 0 0 1 .8 1.6l-6.2 8.3V20a1 1 0 0 1-1.4.9l-4-2A1 1 0 0 1 9 18v-5.1L2.2 5.6A1 1 0 0 1 3 4Z"/>
+                </svg>
+                <span>Filter Collections</span>
+            </div>
+
+            <div class="flex space-x-2">
+                <input id="searchNamespace" type="text" class="border px-2 py-1 rounded" placeholder="Namespace" x-model="searchNamespace">
+                <input type="text" class="border px-2 py-1 rounded" placeholder="Name" x-model="searchName">
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto px-4">
+            <template x-for="col in filteredCollections" :key="col.name">
+                <div class="bg-white shadow rounded-xl p-6 cursor-pointer hover:shadow-xl hover:bg-blue-50 active:scale-[0.98] transition-all duration-150 ease-in-out" @click="openCollection(col)">
+                    <div class="text-gray-500 text-sm" x-text="col.namespace.name"></div>
+                    <div class="text-xl font-semibold" x-text="col.name"></div>
+                    <div class="text-sm text-gray-600" x-text="'Latest: ' + col.highest_version.version"></div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div x-show="view === 'detail'">
+        <div class="max-w-7xl mx-auto px-4 mb-4">
+            <button class="mb-4 text-blue-500 underline" @click="goBack()">&larr; Back</button>
+            <h2 class="text-2xl font-bold mb-2" x-text="(currentCollection?.namespace?.name || '') + '/' + (currentCollection?.name || '')"></h2>
+            <div class="relative inline-block max-w-[14rem] mb-4">
+                <label class="block mb-1">Version:</label>
+                <select x-model="selectedVersion" @change="fetchVersionDetails" class="appearance-none bg-white border border-gray-300 rounded-lg shadow px-4 py-2 pr-10 text-base text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-500 w-full">
+                    <template x-for="v in versions" :key="v.version">
+                        <option :value="v.version" x-text="v.version"></option>
+                    </template>
+                </select>
+                <div class="pointer-events-none absolute right-3 top-[70%] -translate-y-1/2 text-gray-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow mt-6">
+                <div class="flex items-center space-x-2 mb-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-gray-700">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    <h3 class="text-lg font-semibold">Download</h3>
+                </div>
+                <a :href="versionDetails.download_url" class="text-blue-500 underline" target="_blank">Download tarball</a>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl shadow mt-6">
+                <div class="flex items-center space-x-2 mb-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-gray-700">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z" />
+                    </svg>
+                    <h3 class="text-lg font-semibold">Install</h3>
+                </div>
+                <div class="flex items-center space-x-2 mt-1">
+                    <code class="block bg-gray-100 p-2 rounded text-sm" x-ref="installCmd">
+                        ansible-galaxy collection install -s <span x-text="installURL"></span> <span x-text="installName"></span>
+                    </code>
+                    <button @click="copyInstallCmd" class="text-sm px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">
+                        Copy
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="showToast" x-transition
+         class="fixed bottom-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded shadow-lg text-sm">
+        Copied to clipboard!
+    </div>
+
+    <div x-show="loading" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-white/60 backdrop-blur-sm" aria-label="Loading">
+        <svg class="animate-spin h-8 w-8 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+        </svg>
+    </div>
+
+    <script>
+        function collectionsApp() {
+            return {
+                view: 'list',
+                searchNamespace: '',
+                searchName: '',
+                collections: [],
+                currentCollection: null,
+                versions: [],
+                selectedVersion: '',
+                versionDetails: {},
+                showToast: false,
+                pageTitle: 'Collections Browser',
+
+                withLoading(fn) {
+                    return async (...args) => {
+                        this.loading = true;
+                        try {
+                            return await fn.apply(this, args);
+                        } finally {
+                            this.loading = false;
+                        }
+                    };
+                },
+
+                async init() {
+                    if (this._initCalled) return;
+                    this._initCalled = true;
+
+                    await this.withLoading(this.fetchCollections)();
+
+                    this.$watch('showToast', value => {
+                        if (value) {
+                             setTimeout(() => this.showToast = false, 2000);
+                        }
+                    });
+                    this.$watch('pageTitle', value => document.title = value);
+                    this.$watch('searchNamespace', () => this.updateFilterHash());
+                    this.$watch('searchName', () => this.updateFilterHash());
+                },
+
+                async fetchCollections() {
+                    const res = await fetch('/api/v3/collections/');
+                    const data = await res.json();
+                    this.collections = data.results.sort((a, b) => {
+                        const nameA = a.namespace.name + '.' + a.name;
+                        const nameB = b.namespace.name + '.' + b.name;
+                        return nameA.localeCompare(nameB);
+                    });
+
+                    await this.handleRoute();
+                },
+
+                get filteredCollections() {
+                    return this.collections.filter(c =>
+                        c.namespace.name.includes(this.searchNamespace) &&
+                        c.name.includes(this.searchName)
+                    );
+                },
+
+                async handleRoute() {
+                    const hash = window.location.hash;
+
+                    const detailMatch = hash.match(/^#\/([^/?#]+)\/([^/?#]+)(?:\/([^/?#]+))?$/);
+                    if (detailMatch) {
+                        const [_, namespace, name, version] = detailMatch;
+                        const col = this.collections.find(c => c.namespace.name === namespace && c.name === name);
+                        if (col) {
+                            await this.openCollection(col, version, true);
+                        }
+                        return;
+                    }
+
+                    const filterMatch = hash.match(/^#\/filter\?(.*)$/);
+                    if (filterMatch) {
+                        const query = new URLSearchParams(filterMatch[1]);
+                        this.searchNamespace = query.get('ns') || '';
+                        this.searchName = query.get('name') || '';
+                    }
+                },
+
+                updateFilterHash() {
+                    if (this.view !== 'list') return;
+
+                    const params = new URLSearchParams();
+                    if (this.searchNamespace) params.set('ns', this.searchNamespace);
+                    if (this.searchName) params.set('name', this.searchName);
+
+                    const query = params.toString();
+                    window.location.hash = query ? `#/filter?${query}` : '';
+                },
+
+                updateDetailHash() {
+                    if (!this.currentCollection) return;
+
+                    const ns = this.currentCollection.namespace.name;
+                    const name = this.currentCollection.name;
+                    const ver = this.selectedVersion;
+                    window.location.hash = `#/${ns}/${name}/${ver}`;
+                },
+
+                goBack() {
+                    this.view = 'list';
+                    this.pageTitle = 'Collections Browser';
+                    this.selectedVersion = '';
+                    this.versionDetails = {};
+                    this.currentCollection = null;
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    window.location.hash = '';
+                },
+
+                async openCollection(col, versionOverride = null, skipHashUpdate = false) {
+                    this.currentCollection = col;
+                    this.view = 'detail';
+                    this.pageTitle = `${col.namespace.name}.${col.name}`;
+
+                    const res = await fetch(col.versions_url);
+                    const data = await res.json();
+                    this.versions = data.results.sort((a, b) => compareVersions.compareVersions(b.version, a.version));
+
+                    this.selectedVersion = versionOverride || col.highest_version.version;
+                    await this.fetchVersionDetails();
+                    if (!skipHashUpdate) {
+                        window.location.hash = `#/${col.namespace.name}/${col.name}/${this.selectedVersion}`;
+                    }
+                },
+
+                async fetchVersionDetails() {
+                    const ns = this.currentCollection.namespace.name;
+                    const name = this.currentCollection.name;
+                    const version = this.selectedVersion;
+                    const url = `/api/v3/collections/${ns}/${name}/versions/${version}/`;
+
+                    const res = await fetch(url);
+                    this.versionDetails = await res.json();
+                    this.updateDetailHash();
+                },
+
+                get installURL() {
+                    if (!this.currentCollection) return '';
+                    const loc = window.location;
+                    let port = loc.port ? ':' + loc.port : '';
+                    return `${loc.protocol}//${loc.hostname}${port}/`;
+                },
+
+                get installName() {
+                    if (!this.currentCollection) return '';
+                    const ns = this.currentCollection.namespace.name;
+                    const name = this.currentCollection.name;
+                    return `${ns}.${name}==${this.selectedVersion}`;
+                },
+
+                copyInstallCmd() {
+                    const el = this.$refs.installCmd;
+                    const text = el.textContent.trim();
+                    navigator.clipboard.writeText(text).then(() => {
+                        this.showToast = true;
+                    }).catch(err => {
+                        console.error('Failed to copy:', err);
+                    });
+                }
+            }
+        }
+    </script>
+</body>
+</html>

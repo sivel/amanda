@@ -8,12 +8,14 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"crypto/sha256"
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +27,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed index.html
+var embeddedFiles embed.FS
 
 var NotFound = gin.H{
 	"code":    "not_found",
@@ -225,17 +230,30 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 	return collections, nil
 }
 
-func getHost(c *gin.Context) string {
+type Amanda struct {
+	Artifacts string
+	Relative  bool
+}
+
+func (a *Amanda) getHost(c *gin.Context) string {
+	if a.Relative {
+		return ""
+	}
 	url := location.Get(c)
 	return fmt.Sprintf("%s://%s", url.Scheme, c.Request.Host)
 }
 
-type Amanda struct {
-	Artifacts string
-}
-
 func (a *Amanda) NotFound(c *gin.Context) {
 	c.JSON(404, NotFound)
+}
+
+func (a *Amanda) IndexHTML(c *gin.Context) {
+	content, err := embeddedFiles.ReadFile("index.html")
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 }
 
 func (a *Amanda) Api(c *gin.Context) {
@@ -299,14 +317,14 @@ func (a *Amanda) Collections(c *gin.Context) {
 			},
 			"updated_at":   latest.Created,
 			"created_at":   oldest.Created,
-			"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", getHost(c), namespace, name),
+			"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name),
 		}
 
 		if len(prodVersions) > 0 {
 			latestProd := prodVersions[len(prodVersions)-1]
 			latestVersion := latestProd.CollectionInfo.Version.String()
 			result["highest_version"] = gin.H{
-				"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", getHost(c), namespace, name, latestVersion),
+				"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, latestVersion),
 				"version": latestVersion,
 			}
 		}
@@ -356,15 +374,15 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"namespace":    namespace,
 		"updated_at":   latest.Created,
 		"created_at":   oldest.Created,
-		"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", getHost(c), namespace, name),
-		"href":         fmt.Sprintf("%s/api/v3/collections/%s/%s/", getHost(c), namespace, name),
+		"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name),
+		"href":         fmt.Sprintf("%s/api/v3/collections/%s/%s/", a.getHost(c), namespace, name),
 	}
 
 	if len(prodCollections) > 0 {
 		latestProd := prodCollections[len(prodCollections)-1]
 		version := latestProd.CollectionInfo.Version.String()
 		out["highest_version"] = gin.H{
-			"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", getHost(c), namespace, name, version),
+			"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version),
 			"version": version,
 		}
 	}
@@ -390,7 +408,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 		versions = append(
 			versions,
 			gin.H{
-				"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", getHost(c), namespace, name, collection.CollectionInfo.Version.String()),
+				"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, collection.CollectionInfo.Version.String()),
 				"version": collection.CollectionInfo.Version.String(),
 			},
 		)
@@ -422,17 +440,17 @@ func (a *Amanda) Version(c *gin.Context) {
 		},
 		"collection": gin.H{
 			"name": name,
-			"href": fmt.Sprintf("%s/api/v3/collections/%s/%s/", getHost(c), namespace, name),
+			"href": fmt.Sprintf("%s/api/v3/collections/%s/%s/", a.getHost(c), namespace, name),
 		},
 		"name": name,
 		"namespace": gin.H{
 			"name": namespace,
 		},
-		"download_url":     fmt.Sprintf("%s/artifacts/%s", getHost(c), collection.Filename),
+		"download_url":     fmt.Sprintf("%s/artifacts/%s", a.getHost(c), collection.Filename),
 		"metadata":         collection.CollectionInfo,
 		"version":          version,
 		"signatures":       collection.Signatures,
-		"href":             fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", getHost(c), namespace, name, version),
+		"href":             fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version),
 		"requires_ansible": collection.RequiresAnsible,
 	})
 }
@@ -440,13 +458,18 @@ func (a *Amanda) Version(c *gin.Context) {
 func main() {
 	var artifacts string
 	var port string
+	var relative bool
+	var ui bool
 	var err error
 	amanda := Amanda{}
 
 	flag.StringVar(&artifacts, "artifacts", "artifacts", "Location of the artifacts dir")
 	flag.StringVar(&port, "port", "5000", "Port")
+	flag.BoolVar(&relative, "relative", false, "URLs will not include the scheme and domain")
+	flag.BoolVar(&ui, "ui", false, "Enable the HTML UI")
 	flag.Parse()
 
+	amanda.Relative = relative
 	amanda.Artifacts, err = filepath.Abs(artifacts)
 	if err != nil {
 		log.Fatal(err)
@@ -455,6 +478,15 @@ func main() {
 	r := gin.Default()
 	r.RedirectTrailingSlash = true
 	r.Use(location.Default())
+	if ui {
+		if gin.Mode() == gin.ReleaseMode {
+			r.GET("/", amanda.IndexHTML)
+			r.GET("/index.html", amanda.IndexHTML)
+		} else {
+			r.StaticFile("/", "./index.html")
+			r.StaticFile("/index.html", "./index.html")
+		}
+	}
 	r.GET("/api/", amanda.Api)
 	r.GET("/api/v3/collections/", amanda.Collections)
 	r.GET("/api/v3/collections/:namespace/:name/", amanda.Collection)

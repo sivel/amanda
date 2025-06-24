@@ -7,4 +7,5 @@ FROM scratch
 WORKDIR /root/
 COPY --from=builder /tmp/amanda /amanda
 VOLUME /artifacts
-CMD ["/amanda", "-artifacts=/artifacts"]
+ENV GIN_MODE=release
+ENTRYPOINT ["/amanda", "-artifacts=/artifacts"]
