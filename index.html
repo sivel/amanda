@@ -28,11 +28,13 @@
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto px-4">
-            <template x-for="col in filteredCollections" :key="col.name">
+            <template x-for="col in filteredCollections" :key="col.namespace.name + '.' + col.name">
                 <div class="bg-white shadow rounded-xl p-6 cursor-pointer hover:shadow-xl hover:bg-blue-50 active:scale-[0.98] transition-all duration-150 ease-in-out" @click="openCollection(col)">
                     <div class="text-gray-500 text-sm" x-text="col.namespace.name"></div>
                     <div class="text-xl font-semibold" x-text="col.name"></div>
-                    <div class="text-sm text-gray-600" x-text="'Latest: ' + col.highest_version.version"></div>
+                    <template x-if="col.highest_version?.version">
+                        <div class="text-sm text-gray-600" x-text="'Latest: ' + col.highest_version.version"></div>
+                    </template>
                 </div>
             </template>
         </div>
@@ -216,7 +218,7 @@
                     const data = await res.json();
                     this.versions = data.results.sort((a, b) => compareVersions.compareVersions(b.version, a.version));
 
-                    this.selectedVersion = versionOverride || col.highest_version.version;
+                    this.selectedVersion = versionOverride || col.highest_version?.version || this.versions[0].version;
                     await this.fetchVersionDetails();
                     if (!skipHashUpdate) {
                         window.location.hash = `#/${col.namespace.name}/${col.name}/${this.selectedVersion}`;
