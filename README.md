@@ -28,7 +28,7 @@ docker run --rm -d -p 5000:5000 -v /path/to/artifacts:/artifacts ghcr.io/sivel/a
 
 ### HTML UI
 
-amanda now includes a basic HTML UI, disabled by default, that can be enabled using the ``-ui` flag, accessible by default at `http://hostname:5000/`
+amanda now includes a basic HTML UI, disabled by default, that can be enabled using the `-ui` flag, accessible by default at `http://hostname:5000/`
 
 ```
 ./amanda -ui
