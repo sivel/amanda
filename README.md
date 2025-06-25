@@ -26,6 +26,14 @@ A simple web application, to mimic the v3 API endpoints for Ansible Galaxy Colle
 docker run --rm -d -p 5000:5000 -v /path/to/artifacts:/artifacts ghcr.io/sivel/amanda:latest
 ```
 
+### HTML UI
+
+amanda now includes a basic HTML UI, disabled by default, that can be enabled using the ``-ui` flag, accessible by default at `http://hostname:5000/`
+
+```
+./amanda -ui
+```
+
 ## Signatures
 
 Alongside the `.tar.gz` artifact for a collection, create a file with the same base name and a `.asc` extension.
