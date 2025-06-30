@@ -127,7 +127,11 @@
                     if (this._initCalled) return;
                     this._initCalled = true;
 
-                    await this.withLoading(this.fetchCollections)();
+                    this.fetchCollections = this.withLoading(this.fetchCollections);
+                    this.fetchVersionDetails = this.withLoading(this.fetchVersionDetails);
+                    this.openCollection = this.withLoading(this.openCollection);
+
+                    await this.fetchCollections();
 
                     this.$watch('showToast', value => {
                         if (value) {

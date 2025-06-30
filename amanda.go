@@ -13,20 +13,24 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/Masterminds/semver/v3"
+	semver "github.com/Masterminds/semver/v3"
 	"github.com/gin-contrib/location"
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
+	"golang.org/x/sys/unix"
+	yaml "gopkg.in/yaml.v3"
 )
+
+const xattrName = "user.amanda"
+const iso8601 = "2006-01-02T15:04:05.000000-0700"
 
 //go:embed index.html
 var embeddedFiles embed.FS
@@ -59,12 +63,11 @@ type Collection struct {
 	CollectionInfo  CollectionInfo `json:"collection_info"`
 	Signatures      []CollectionSignature
 	RequiresAnsible string `json:"requires_ansible"`
+	xattrMutex      sync.Mutex
 }
 
-var discoveryCache = make(map[string]map[time.Time]Collection)
-
 func (c *Collection) Matches(namespace string, name string, version string) bool {
-	var match bool = true
+	match := true
 	if namespace != "" && name != "" {
 		match = c.CollectionInfo.Namespace == namespace && c.CollectionInfo.Name == name
 	}
@@ -77,6 +80,69 @@ func (c *Collection) Matches(namespace string, name string, version string) bool
 	return match
 }
 
+func (c *Collection) WriteXattr() error {
+	c.xattrMutex.Lock()
+	defer c.xattrMutex.Unlock()
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(c.Path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return unix.Fsetxattr(int(f.Fd()), xattrName, data, 0)
+}
+
+func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
+	if !xattrs {
+		return nil, nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	size, err := unix.Fgetxattr(int(f.Fd()), xattrName, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, size)
+	_, err = unix.Fgetxattr(int(f.Fd()), xattrName, buf)
+	if err != nil {
+		return nil, err
+	}
+
+	var collection Collection
+	if err := json.Unmarshal(buf, &collection); err != nil {
+		return nil, err
+	}
+
+	createdTime, err := time.Parse(iso8601, collection.Created)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.ModTime().Equal(createdTime) {
+		unix.Fremovexattr(int(f.Fd()), xattrName)
+		return nil, fmt.Errorf("modtime mismatch")
+	}
+
+	return &collection, nil
+}
+
 func getSha256Digest(file *os.File) (string, error) {
 	defer file.Seek(0, 0)
 	h := sha256.New()
@@ -86,14 +152,14 @@ func getSha256Digest(file *os.File) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func getManifest(file *os.File) (Collection, error) {
+func getManifest(file *os.File) (*Collection, error) {
 	defer file.Seek(0, 0)
 
 	var collection Collection
 
 	gzReader, err := gzip.NewReader(file)
 	if err != nil {
-		return collection, err
+		return &collection, err
 	}
 	tarReader := tar.NewReader(gzReader)
 	for {
@@ -104,10 +170,12 @@ func getManifest(file *os.File) (Collection, error) {
 		}
 
 		if err != nil {
-			return collection, err
+			return &collection, err
 		}
 
-		if strings.ToLower(header.Name) == "manifest.json" || strings.ToLower(header.Name) == "./manifest.json" {
+		name := strings.ToLower(header.Name)
+
+		if name == "manifest.json" || name == "./manifest.json" {
 			data := make([]byte, header.Size)
 			_, err := tarReader.Read(data)
 			if err != io.EOF && err != nil {
@@ -115,22 +183,22 @@ func getManifest(file *os.File) (Collection, error) {
 			}
 			err = json.Unmarshal(data, &collection)
 			if err != nil {
-				return collection, err
+				return &collection, err
 			}
 			break
 		}
 	}
-	return collection, nil
+	return &collection, nil
 }
 
-func getRuntime(file *os.File) (CollectionRuntime, error) {
+func getRuntime(file *os.File) (*CollectionRuntime, error) {
 	defer file.Seek(0, 0)
 
 	var runtime CollectionRuntime
 
 	gzReader, err := gzip.NewReader(file)
 	if err != nil {
-		return runtime, err
+		return &runtime, err
 	}
 	tarReader := tar.NewReader(gzReader)
 	for {
@@ -141,10 +209,12 @@ func getRuntime(file *os.File) (CollectionRuntime, error) {
 		}
 
 		if err != nil {
-			return runtime, err
+			return &runtime, err
 		}
 
-		if strings.ToLower(header.Name) == "meta/runtime.yml" || strings.ToLower(header.Name) == "./meta/runtime.yml" {
+		name := strings.ToLower(header.Name)
+
+		if name == "meta/runtime.yml" || name == "./meta/runtime.yml" {
 			data := make([]byte, header.Size)
 			_, err := tarReader.Read(data)
 			if err != io.EOF && err != nil {
@@ -152,26 +222,86 @@ func getRuntime(file *os.File) (CollectionRuntime, error) {
 			}
 			err = yaml.Unmarshal(data, &runtime)
 			if err != nil {
-				return runtime, err
+				return &runtime, err
 			}
 			break
 		}
 	}
-	return runtime, nil
+	return &runtime, nil
 }
 
-func discoverCollections(artifacts string, namespace string, name string, version string) ([]Collection, error) {
-	var collections []Collection
+func collectionFromTar(path string) (*Collection, error) {
+	var collection *Collection
 
-	files, err := ioutil.ReadDir(artifacts)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	collection, err = getManifest(file)
+	if err != nil {
+		return nil, err
+	}
+	collection.Sha, err = getSha256Digest(file)
+	if err != nil {
+		return nil, err
+	}
+
+	runtime, err := getRuntime(file)
+	if err == nil {
+		collection.RequiresAnsible = runtime.RequiresAnsible
+	}
+
+	return collection, nil
+}
+
+type discoveryCacheKey struct {
+	filename string
+	modtime  time.Time
+}
+
+type Discover struct {
+	artifacts string
+	xattrs    bool
+	cache     sync.Map
+}
+
+func (d *Discover) cacheKey(filename string, modtime time.Time) discoveryCacheKey {
+	return discoveryCacheKey{filename, modtime}
+}
+
+func (d *Discover) store(filename string, modtime time.Time, collection *Collection) {
+	key := d.cacheKey(filename, modtime)
+	d.cache.Store(key, collection)
+}
+
+func (d *Discover) load(filename string, modtime time.Time) (*Collection, bool) {
+	key := d.cacheKey(filename, modtime)
+	val, ok := d.cache.Load(key)
+	if ok {
+		return val.(*Collection), ok
+	}
+	return nil, ok
+}
+
+func (d *Discover) Get(namespace string, name string, version string) ([]*Collection, error) {
+	var collections []*Collection
+
+	files, err := os.ReadDir(d.artifacts)
 	if err != nil {
 		return collections, err
 	}
 
-	for _, fileInfo := range files {
-		var collection Collection
-		var runtime CollectionRuntime
+	for _, entry := range files {
+		fileInfo, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		var collection *Collection
 		filename := fileInfo.Name()
+		path := filepath.Join(d.artifacts, filename)
 		extension := filename[len(filename)-7:]
 		if extension != ".tar.gz" {
 			continue
@@ -179,47 +309,35 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 		stem := filename[:len(filename)-7]
 		signatureFilename := stem + ".asc"
 		modtime := fileInfo.ModTime()
-		if val, ok := discoveryCache[filename][modtime]; ok {
+		if val, ok := d.load(filename, modtime); ok {
 			collection = val
+		} else if val, err := collectionFromXattr(path, d.xattrs); val != nil {
+			collection = val
+			collection.Filename = filename
+			collection.Path = path
+			d.store(filename, modtime, collection)
 		} else {
-			path := filepath.Join(artifacts, filename)
-			file, err := os.Open(path)
+			collection, err = collectionFromTar(path)
 			if err != nil {
 				continue
-			}
-			collection, err = getManifest(file)
-			if err != nil {
-				file.Close()
-				continue
-			}
-			collection.Sha, err = getSha256Digest(file)
-			if err != nil {
-				file.Close()
-				continue
-			}
-
-			runtime, err = getRuntime(file)
-			file.Close()
-			if err == nil {
-				collection.RequiresAnsible = runtime.RequiresAnsible
 			}
 
 			collection.Filename = filename
 			collection.Path = path
-			collection.Created = modtime.Format("2006-01-02T15:04:05.000000-0700")
+			collection.Created = modtime.Format(iso8601)
 
-			signature, err := os.ReadFile(filepath.Join(artifacts, signatureFilename))
+			signature, err := os.ReadFile(filepath.Join(d.artifacts, signatureFilename))
 			if err == nil {
 				collectionSignature := CollectionSignature{string(signature)}
 				collection.Signatures = append(collection.Signatures, collectionSignature)
 			}
-			if _, ok := discoveryCache[filename]; !ok {
-				discoveryCache[filename] = make(map[time.Time]Collection)
+			d.store(filename, modtime, collection)
+			if d.xattrs {
+				collection.WriteXattr()
 			}
-			discoveryCache[filename][modtime] = collection
 		}
 
-		if collection.Matches(namespace, name, version) {
+		if collection != nil && collection.Matches(namespace, name, version) {
 			collections = append(collections, collection)
 			if version != "" {
 				break
@@ -231,12 +349,12 @@ func discoverCollections(artifacts string, namespace string, name string, versio
 }
 
 type Amanda struct {
-	Artifacts string
-	Relative  bool
+	relative bool
+	discover *Discover
 }
 
 func (a *Amanda) getHost(c *gin.Context) string {
-	if a.Relative {
+	if a.relative {
 		return ""
 	}
 	url := location.Get(c)
@@ -244,7 +362,7 @@ func (a *Amanda) getHost(c *gin.Context) string {
 }
 
 func (a *Amanda) NotFound(c *gin.Context) {
-	c.JSON(404, NotFound)
+	c.JSON(http.StatusNotFound, NotFound)
 }
 
 func (a *Amanda) IndexHTML(c *gin.Context) {
@@ -257,7 +375,7 @@ func (a *Amanda) IndexHTML(c *gin.Context) {
 }
 
 func (a *Amanda) Api(c *gin.Context) {
-	c.JSON(200, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"available_versions": gin.H{
 			"v3": "v3/",
 		},
@@ -266,14 +384,14 @@ func (a *Amanda) Api(c *gin.Context) {
 }
 
 func (a *Amanda) Collections(c *gin.Context) {
-	discovered, err := discoverCollections(a.Artifacts, "", "", "")
+	discovered, err := a.discover.Get("", "", "")
 	if err != nil {
-		c.AbortWithError(500, err)
+		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
 	var results []gin.H
-	collections := make(map[string][]Collection)
+	collections := make(map[string][]*Collection)
 
 	for _, collection := range discovered {
 		namespace := collection.CollectionInfo.Namespace
@@ -281,7 +399,7 @@ func (a *Amanda) Collections(c *gin.Context) {
 		seenKey := namespace + "." + name
 
 		if _, ok := collections[seenKey]; !ok {
-			collections[seenKey] = make([]Collection, 0)
+			collections[seenKey] = make([]*Collection, 0)
 		}
 
 		collections[seenKey] = append(collections[seenKey], collection)
@@ -289,7 +407,7 @@ func (a *Amanda) Collections(c *gin.Context) {
 	}
 
 	for _, versions := range collections {
-		var prodVersions []Collection
+		var prodVersions []*Collection
 		for _, version := range versions {
 			if version.CollectionInfo.Version.Prerelease() == "" {
 				prodVersions = append(prodVersions, version)
@@ -338,17 +456,17 @@ func (a *Amanda) Collections(c *gin.Context) {
 		"results": results,
 	}
 
-	c.JSON(200, out)
+	c.JSON(http.StatusOK, out)
 }
 
 func (a *Amanda) Collection(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	discovered, err := discoverCollections(a.Artifacts, namespace, name, "")
-	var prodCollections []Collection
+	discovered, err := a.discover.Get(namespace, name, "")
+	var prodCollections []*Collection
 
 	if err != nil {
-		c.AbortWithError(500, err)
+		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	if len(discovered) == 0 {
@@ -393,15 +511,15 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"version": latestVersion,
 	}
 
-	c.JSON(200, out)
+	c.JSON(http.StatusOK, out)
 }
 
 func (a *Amanda) Versions(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	discovered, err := discoverCollections(a.Artifacts, namespace, name, "")
+	discovered, err := a.discover.Get(namespace, name, "")
 	if err != nil {
-		c.AbortWithError(500, err)
+		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	if len(discovered) == 0 {
@@ -419,7 +537,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 			},
 		)
 	}
-	c.JSON(200, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"results": versions,
 	})
 }
@@ -428,9 +546,9 @@ func (a *Amanda) Version(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	version := c.Params.ByName("version")
-	discovered, err := discoverCollections(a.Artifacts, namespace, name, version)
+	discovered, err := a.discover.Get(namespace, name, version)
 	if err != nil {
-		c.AbortWithError(500, err)
+		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 	if len(discovered) == 0 {
@@ -439,7 +557,7 @@ func (a *Amanda) Version(c *gin.Context) {
 	}
 	collection := discovered[0]
 
-	c.JSON(200, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"artifact": gin.H{
 			"filename": collection.Filename,
 			"sha256":   collection.Sha,
@@ -466,19 +584,30 @@ func main() {
 	var port string
 	var relative bool
 	var ui bool
+	var xattrs bool
 	var err error
-	amanda := Amanda{}
 
 	flag.StringVar(&artifacts, "artifacts", "artifacts", "Location of the artifacts dir")
 	flag.StringVar(&port, "port", "5000", "Port")
 	flag.BoolVar(&relative, "relative", false, "URLs will not include the scheme and domain")
 	flag.BoolVar(&ui, "ui", false, "Enable the HTML UI")
+	flag.BoolVar(&xattrs, "xattrs", false, "Enable caching metadata on xattrs for faster startup")
 	flag.Parse()
 
-	amanda.Relative = relative
-	amanda.Artifacts, err = filepath.Abs(artifacts)
+	log.SetOutput(gin.DefaultErrorWriter)
+
+	artifacts, err = filepath.Abs(artifacts)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	discover := &Discover{
+		artifacts: artifacts,
+		xattrs:    xattrs,
+	}
+	amanda := Amanda{
+		relative: relative,
+		discover: discover,
 	}
 
 	r := gin.Default()
@@ -498,6 +627,6 @@ func main() {
 	r.GET("/api/v3/collections/:namespace/:name/", amanda.Collection)
 	r.GET("/api/v3/collections/:namespace/:name/versions/", amanda.Versions)
 	r.GET("/api/v3/collections/:namespace/:name/versions/:version/", amanda.Version)
-	r.Static("/artifacts", amanda.Artifacts)
+	r.Static("/artifacts", artifacts)
 	r.Run(":" + port)
 }
