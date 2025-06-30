@@ -135,7 +135,9 @@ func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
 		return nil, err
 	}
 
-	if !info.ModTime().Equal(createdTime) {
+	modTime := info.ModTime().Truncate(time.Microsecond)
+
+	if !modTime.Equal(createdTime) {
 		unix.Fremovexattr(int(f.Fd()), xattrName)
 		return nil, fmt.Errorf("modtime mismatch")
 	}
