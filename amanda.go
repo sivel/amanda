@@ -529,6 +529,10 @@ func (a *Amanda) Versions(c *gin.Context) {
 		return
 	}
 
+	sort.Slice(discovered, func(i, j int) bool {
+		return discovered[i].CollectionInfo.Version.GreaterThan(discovered[j].CollectionInfo.Version)
+	})
+
 	var versions []gin.H
 	for _, collection := range discovered {
 		versions = append(

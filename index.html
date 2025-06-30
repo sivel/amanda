@@ -220,7 +220,7 @@
 
                     const res = await fetch(col.versions_url);
                     const data = await res.json();
-                    this.versions = data.results.sort((a, b) => compareVersions.compareVersions(b.version, a.version));
+                    this.versions = data.results;
 
                     this.selectedVersion = versionOverride || col.highest_version?.version || this.versions[0].version;
                     await this.fetchVersionDetails();
