@@ -304,8 +304,7 @@ func (d *Discover) Get(namespace string, name string, version string) ([]*Collec
 		var collection *Collection
 		filename := fileInfo.Name()
 		path := filepath.Join(d.artifacts, filename)
-		extension := filename[len(filename)-7:]
-		if extension != ".tar.gz" {
+		if !strings.HasSuffix(filename, ".tar.gz") {
 			continue
 		}
 		stem := filename[:len(filename)-7]
