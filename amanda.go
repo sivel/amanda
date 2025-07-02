@@ -6,14 +6,17 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,6 +41,37 @@ var embeddedFiles embed.FS
 var NotFound = gin.H{
 	"code":    "not_found",
 	"message": "Not found.",
+}
+
+var loggedErrors sync.Map
+
+func LogErrOnce[T any](val T, err error) (T, error) {
+	if err != nil {
+		if _, loaded := loggedErrors.LoadOrStore(err.Error(), true); !loaded {
+			log.Printf("error: %v", err)
+		}
+	}
+	return val, err
+}
+
+func validateName(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+
+	b := s[0]
+	if b < 'a' || b > 'z' {
+		return false
+	}
+
+	for i := 1; i < len(s); i++ {
+		b := s[i]
+		if !(('a' <= b && b <= 'z') || ('0' <= b && b <= '9') || b == '_') {
+			return false
+		}
+	}
+
+	return true
 }
 
 type CollectionSignature struct {
@@ -86,21 +120,28 @@ func (c *Collection) WriteXattr() error {
 
 	data, err := json.Marshal(c)
 	if err != nil {
+		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
 		return err
 	}
 
 	f, err := os.OpenFile(c.Path, os.O_WRONLY, 0)
 	if err != nil {
+		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
 		return err
 	}
 	defer f.Close()
 
-	return unix.Fsetxattr(int(f.Fd()), xattrName, data, 0)
+	err = unix.Fsetxattr(int(f.Fd()), xattrName, data, 0)
+	if err != nil {
+		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
+		return err
+	}
+	return nil
 }
 
 func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
 	if !xattrs {
-		return nil, nil
+		return nil, fmt.Errorf("xattrs not enabled")
 	}
 
 	f, err := os.Open(path)
@@ -111,13 +152,13 @@ func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
 
 	size, err := unix.Fgetxattr(int(f.Fd()), xattrName, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xattr %s on %s %s", xattrName, path, err)
 	}
 
 	buf := make([]byte, size)
 	_, err = unix.Fgetxattr(int(f.Fd()), xattrName, buf)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xattr %s on %s %s", xattrName, path, err)
 	}
 
 	var collection Collection
@@ -127,7 +168,7 @@ func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
 
 	createdTime, err := time.Parse(iso8601, collection.Created)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to parse cache created date on %s: %s", path, err)
 	}
 
 	info, err := f.Stat()
@@ -139,13 +180,13 @@ func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
 
 	if !modTime.Equal(createdTime) {
 		unix.Fremovexattr(int(f.Fd()), xattrName)
-		return nil, fmt.Errorf("modtime mismatch")
+		return nil, fmt.Errorf("modtime mismatch on %s: %s != %s", path, createdTime, modTime)
 	}
 
 	return &collection, nil
 }
 
-func getSha256Digest(file *os.File) (string, error) {
+func getSha256Digest(file io.ReadSeeker) (string, error) {
 	defer file.Seek(0, 0)
 	h := sha256.New()
 	if _, err := io.Copy(h, file); err != nil {
@@ -154,7 +195,7 @@ func getSha256Digest(file *os.File) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func getManifest(file *os.File) (*Collection, error) {
+func getManifest(file io.ReadSeeker) (*Collection, error) {
 	defer file.Seek(0, 0)
 
 	var collection Collection
@@ -193,7 +234,7 @@ func getManifest(file *os.File) (*Collection, error) {
 	return &collection, nil
 }
 
-func getRuntime(file *os.File) (*CollectionRuntime, error) {
+func getRuntime(file io.ReadSeeker) (*CollectionRuntime, error) {
 	defer file.Seek(0, 0)
 
 	var runtime CollectionRuntime
@@ -232,22 +273,26 @@ func getRuntime(file *os.File) (*CollectionRuntime, error) {
 	return &runtime, nil
 }
 
-func collectionFromTar(path string) (*Collection, error) {
+func collectionFromTar(path string, file io.ReadSeeker) (*Collection, error) {
 	var collection *Collection
+	var err error
 
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
+	if file == nil {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		file = f
 	}
-	defer file.Close()
 
 	collection, err = getManifest(file)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("manifest: %s %s", path, err)
 	}
 	collection.Sha, err = getSha256Digest(file)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sha256: %s %s", path, err)
 	}
 
 	runtime, err := getRuntime(file)
@@ -258,39 +303,50 @@ func collectionFromTar(path string) (*Collection, error) {
 	return collection, nil
 }
 
-type discoveryCacheKey struct {
+func decodeBase64ToBuffer(r io.Reader) (*bytes.Reader, error) {
+	decoder := base64.NewDecoder(base64.StdEncoding, r)
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, decoder); err != nil {
+		return nil, err
+	}
+
+	return bytes.NewReader(buf.Bytes()), nil
+}
+
+type cacheKey struct {
 	filename string
 	modtime  time.Time
 }
 
-type Discover struct {
+type Storage struct {
 	artifacts string
 	xattrs    bool
 	cache     sync.Map
 }
 
-func (d *Discover) cacheKey(filename string, modtime time.Time) discoveryCacheKey {
-	return discoveryCacheKey{filename, modtime}
+func (s *Storage) cacheKey(filename string, modtime time.Time) cacheKey {
+	return cacheKey{filename, modtime}
 }
 
-func (d *Discover) store(filename string, modtime time.Time, collection *Collection) {
-	key := d.cacheKey(filename, modtime)
-	d.cache.Store(key, collection)
+func (s *Storage) store(filename string, modtime time.Time, collection *Collection) {
+	key := s.cacheKey(filename, modtime)
+	s.cache.Store(key, collection)
 }
 
-func (d *Discover) load(filename string, modtime time.Time) (*Collection, bool) {
-	key := d.cacheKey(filename, modtime)
-	val, ok := d.cache.Load(key)
+func (s *Storage) load(filename string, modtime time.Time) (*Collection, bool) {
+	key := s.cacheKey(filename, modtime)
+	val, ok := s.cache.Load(key)
 	if ok {
 		return val.(*Collection), ok
 	}
 	return nil, ok
 }
 
-func (d *Discover) Get(namespace string, name string, version string) ([]*Collection, error) {
+func (s *Storage) Read(namespace string, name string, version string) ([]*Collection, error) {
 	var collections []*Collection
 
-	files, err := os.ReadDir(d.artifacts)
+	files, err := os.ReadDir(s.artifacts)
 	if err != nil {
 		return collections, err
 	}
@@ -303,22 +359,22 @@ func (d *Discover) Get(namespace string, name string, version string) ([]*Collec
 
 		var collection *Collection
 		filename := fileInfo.Name()
-		path := filepath.Join(d.artifacts, filename)
+		path := filepath.Join(s.artifacts, filename)
 		if !strings.HasSuffix(filename, ".tar.gz") {
 			continue
 		}
 		stem := filename[:len(filename)-7]
 		signatureFilename := stem + ".asc"
 		modtime := fileInfo.ModTime()
-		if val, ok := d.load(filename, modtime); ok {
+		if val, ok := s.load(filename, modtime); ok {
 			collection = val
-		} else if val, err := collectionFromXattr(path, d.xattrs); val != nil {
+		} else if val, err := LogErrOnce(collectionFromXattr(path, s.xattrs)); val != nil {
 			collection = val
 			collection.Filename = filename
 			collection.Path = path
-			d.store(filename, modtime, collection)
+			s.store(filename, modtime, collection)
 		} else {
-			collection, err = collectionFromTar(path)
+			collection, err = LogErrOnce(collectionFromTar(path, nil))
 			if err != nil {
 				continue
 			}
@@ -327,13 +383,13 @@ func (d *Discover) Get(namespace string, name string, version string) ([]*Collec
 			collection.Path = path
 			collection.Created = modtime.Format(iso8601)
 
-			signature, err := os.ReadFile(filepath.Join(d.artifacts, signatureFilename))
+			signature, err := os.ReadFile(filepath.Join(s.artifacts, signatureFilename))
 			if err == nil {
 				collectionSignature := CollectionSignature{string(signature)}
 				collection.Signatures = append(collection.Signatures, collectionSignature)
 			}
-			d.store(filename, modtime, collection)
-			if d.xattrs {
+			s.store(filename, modtime, collection)
+			if s.xattrs {
 				collection.WriteXattr()
 			}
 		}
@@ -349,9 +405,71 @@ func (d *Discover) Get(namespace string, name string, version string) ([]*Collec
 	return collections, nil
 }
 
+func (s *Storage) Write(sha256 string, file *multipart.FileHeader) (string, error) {
+	src, err := file.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	var srcBuf io.ReadSeeker
+	cte := file.Header.Get("Content-Transfer-Encoding")
+	if cte == "base64" {
+		srcBuf, err = decodeBase64ToBuffer(src)
+	} else {
+		srcBuf = src
+	}
+
+	collection, err := LogErrOnce(collectionFromTar(file.Filename, srcBuf))
+	if err != nil {
+		return "", err
+	}
+	if strings.ToLower(collection.Sha) != strings.ToLower(sha256) {
+		return "", fmt.Errorf("checksum mismatch")
+	}
+
+	ci := collection.CollectionInfo
+
+	if !validateName(ci.Namespace) {
+		return "", fmt.Errorf("invalid namespace")
+	}
+	if !validateName(ci.Name) {
+		return "", fmt.Errorf("invalid name")
+	}
+	dstName := fmt.Sprintf("%s-%s-%s.tar.gz", ci.Namespace, ci.Name, ci.Version.String())
+	dstPath := filepath.Join(s.artifacts, dstName)
+
+	if _, err := os.Stat(dstPath); err == nil {
+		return "", fmt.Errorf("collection version already exists")
+	}
+
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		return "", err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, srcBuf)
+	if err != nil {
+		return "", err
+	}
+
+	return dstName, nil
+}
+
+func (s *Storage) Exists(filename string) bool {
+	path := filepath.Join(s.artifacts, filename)
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	return false
+}
+
 type Amanda struct {
-	relative bool
-	discover *Discover
+	relative     bool
+	storage      *Storage
+	publishMutex sync.Mutex
 }
 
 func (a *Amanda) getHost(c *gin.Context) string {
@@ -385,7 +503,7 @@ func (a *Amanda) Api(c *gin.Context) {
 }
 
 func (a *Amanda) Collections(c *gin.Context) {
-	discovered, err := a.discover.Get("", "", "")
+	discovered, err := a.storage.Read("", "", "")
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -463,7 +581,7 @@ func (a *Amanda) Collections(c *gin.Context) {
 func (a *Amanda) Collection(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	discovered, err := a.discover.Get(namespace, name, "")
+	discovered, err := a.storage.Read(namespace, name, "")
 	var prodCollections []*Collection
 
 	if err != nil {
@@ -518,7 +636,7 @@ func (a *Amanda) Collection(c *gin.Context) {
 func (a *Amanda) Versions(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	discovered, err := a.discover.Get(namespace, name, "")
+	discovered, err := a.storage.Read(namespace, name, "")
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -551,7 +669,7 @@ func (a *Amanda) Version(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	version := c.Params.ByName("version")
-	discovered, err := a.discover.Get(namespace, name, version)
+	discovered, err := a.storage.Read(namespace, name, version)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -584,12 +702,88 @@ func (a *Amanda) Version(c *gin.Context) {
 	})
 }
 
+func (a *Amanda) Publish(c *gin.Context) {
+	a.publishMutex.Lock()
+	defer a.publishMutex.Unlock()
+
+	sha256 := c.PostForm("sha256")
+	if sha256 == "" {
+		c.String(http.StatusBadRequest, "publish error: missing sha256")
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.String(http.StatusBadRequest, "publish error: %s", err.Error())
+		return
+	}
+
+	dst, err := a.storage.Write(sha256, file)
+	if err != nil {
+		c.String(http.StatusBadRequest, "publish error: %s", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task": fmt.Sprintf("%s/api/v3/imports/collections/%s/", a.getHost(c), dst),
+	})
+}
+
+func (a *Amanda) ImportTask(c *gin.Context) {
+	dstName := c.Params.ByName("task")
+	if !a.storage.Exists(dstName) {
+		a.NotFound(c)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"state":       "completed",
+		"finished_at": time.Now().Format(iso8601),
+	})
+}
+
+func indent(text string, prefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if len(line) > 0 {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+type logWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+func (w logWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func LogStatusContext() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		logWriter := &logWriter{body: new(bytes.Buffer), ResponseWriter: c.Writer}
+		c.Writer = logWriter
+
+		c.Next()
+
+		switch c.Writer.Status() {
+		case http.StatusBadRequest:
+			body := indent(logWriter.body.String(), "    ")
+			log.Printf("400 Bad Request: %s %s\n%s", c.Request.Method, c.Request.URL.Path, body)
+		default:
+			// pass
+		}
+	}
+}
+
 func main() {
 	var artifacts string
 	var port string
 	var relative bool
 	var ui bool
 	var xattrs bool
+	var publish bool
 	var err error
 
 	flag.StringVar(&artifacts, "artifacts", "artifacts", "Location of the artifacts dir")
@@ -597,6 +791,7 @@ func main() {
 	flag.BoolVar(&relative, "relative", false, "URLs will not include the scheme and domain")
 	flag.BoolVar(&ui, "ui", false, "Enable the HTML UI")
 	flag.BoolVar(&xattrs, "xattrs", false, "Enable caching metadata on xattrs for faster startup")
+	flag.BoolVar(&publish, "publish", false, "Enable publishing routes")
 	flag.Parse()
 
 	log.SetOutput(gin.DefaultErrorWriter)
@@ -606,18 +801,34 @@ func main() {
 		log.Fatal(err)
 	}
 
-	discover := &Discover{
+	storage := &Storage{
 		artifacts: artifacts,
 		xattrs:    xattrs,
 	}
 	amanda := Amanda{
 		relative: relative,
-		discover: discover,
+		storage:  storage,
 	}
 
 	r := gin.Default()
+	r.MaxMultipartMemory = 20 << 20
 	r.RedirectTrailingSlash = true
+
 	r.Use(location.Default())
+	r.Use(LogStatusContext())
+
+	r.GET("/api/", amanda.Api)
+	r.GET("/api/v3/collections/", amanda.Collections)
+	r.GET("/api/v3/collections/:namespace/:name/", amanda.Collection)
+	r.GET("/api/v3/collections/:namespace/:name/versions/", amanda.Versions)
+	r.GET("/api/v3/collections/:namespace/:name/versions/:version/", amanda.Version)
+	r.Static("/artifacts", artifacts)
+
+	if publish {
+		r.POST("/api/v3/artifacts/collections/", amanda.Publish)
+		r.GET("/api/v3/imports/collections/:task/", amanda.ImportTask)
+	}
+
 	if ui {
 		if _, err := os.Stat("./index.html"); err != nil || gin.Mode() == gin.ReleaseMode {
 			r.GET("/", amanda.IndexHTML)
@@ -627,11 +838,6 @@ func main() {
 			r.StaticFile("/index.html", "./index.html")
 		}
 	}
-	r.GET("/api/", amanda.Api)
-	r.GET("/api/v3/collections/", amanda.Collections)
-	r.GET("/api/v3/collections/:namespace/:name/", amanda.Collection)
-	r.GET("/api/v3/collections/:namespace/:name/versions/", amanda.Versions)
-	r.GET("/api/v3/collections/:namespace/:name/versions/:version/", amanda.Version)
-	r.Static("/artifacts", artifacts)
+
 	r.Run(":" + port)
 }

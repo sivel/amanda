@@ -28,11 +28,23 @@ docker run --rm -d -p 5000:5000 -v /path/to/artifacts:/artifacts ghcr.io/sivel/a
 
 ### HTML UI
 
-amanda now includes a basic HTML UI, disabled by default, that can be enabled using the `-ui` flag, accessible by default at `http://hostname:5000/`
+`amanda` now includes a basic HTML UI, disabled by default, that can be enabled using the `-ui` flag, accessible by default at `http://hostname:5000/`
 
 ```
 ./amanda -ui
 ```
+
+### Publish
+
+If you want to be able to use `ansible-galaxy collection publish` you can enable the functionality in `amanda` with `-publish`.
+
+```
+./amanda -publish
+```
+
+This application does not and will not handle any form of authentication or role based access controls; If you enable publishing it is highly recommended to use a reverse proxy that has authentication functionality that you can place in front of `amanda` to prevent unauthorized uploads.
+
+Publishing does not support the ability to upload a signature.
 
 ## Signatures
 
