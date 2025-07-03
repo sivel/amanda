@@ -97,7 +97,11 @@ type Collection struct {
 	CollectionInfo  CollectionInfo `json:"collection_info"`
 	Signatures      []CollectionSignature
 	RequiresAnsible string `json:"requires_ansible"`
-	xattrMutex      sync.Mutex
+	mutex           sync.Mutex
+}
+
+func (c *Collection) Mutex() *sync.Mutex {
+	return &c.mutex
 }
 
 func (c *Collection) Matches(namespace string, name string, version string) bool {
@@ -112,31 +116,6 @@ func (c *Collection) Matches(namespace string, name string, version string) bool
 	}
 
 	return match
-}
-
-func (c *Collection) WriteXattr() error {
-	c.xattrMutex.Lock()
-	defer c.xattrMutex.Unlock()
-
-	data, err := json.Marshal(c)
-	if err != nil {
-		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
-		return err
-	}
-
-	f, err := os.OpenFile(c.Path, os.O_WRONLY, 0)
-	if err != nil {
-		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
-		return err
-	}
-	defer f.Close()
-
-	err = unix.Fsetxattr(int(f.Fd()), xattrName, data, 0)
-	if err != nil {
-		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
-		return err
-	}
-	return nil
 }
 
 func collectionFromXattr(path string, xattrs bool) (*Collection, error) {
@@ -390,7 +369,7 @@ func (s *Storage) Read(namespace string, name string, version string) ([]*Collec
 			}
 			s.store(filename, modtime, collection)
 			if s.xattrs {
-				collection.WriteXattr()
+				s.WriteXattr(collection)
 			}
 		}
 
@@ -439,7 +418,7 @@ func (s *Storage) Write(sha256 string, file *multipart.FileHeader) (string, erro
 	dstName := fmt.Sprintf("%s-%s-%s.tar.gz", ci.Namespace, ci.Name, ci.Version.String())
 	dstPath := filepath.Join(s.artifacts, dstName)
 
-	if _, err := os.Stat(dstPath); err == nil {
+	if s.Exists(dstName) {
 		return "", fmt.Errorf("collection version already exists")
 	}
 
@@ -455,6 +434,31 @@ func (s *Storage) Write(sha256 string, file *multipart.FileHeader) (string, erro
 	}
 
 	return dstName, nil
+}
+
+func (s *Storage) WriteXattr(c *Collection) error {
+	c.Mutex().Lock()
+	defer c.Mutex().Unlock()
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
+		return err
+	}
+
+	f, err := os.OpenFile(c.Path, os.O_WRONLY, 0)
+	if err != nil {
+		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
+		return err
+	}
+	defer f.Close()
+
+	err = unix.Fsetxattr(int(f.Fd()), xattrName, data, 0)
+	if err != nil {
+		LogErrOnce("", fmt.Errorf("xattr: %s %s", c.Path, err))
+		return err
+	}
+	return nil
 }
 
 func (s *Storage) Exists(filename string) bool {
