@@ -125,6 +125,8 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, *CollectionRuntime, erro
 	if err != nil {
 		return collection, runtime, err
 	}
+	defer gzReader.Close()
+
 	tarReader := tar.NewReader(gzReader)
 	foundManifest := false
 	foundRuntime := false
