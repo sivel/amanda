@@ -21,7 +21,7 @@ var loggedErrors sync.Map
 
 func LogErrOnce[T any](val T, err error) (T, error) {
 	if err != nil {
-		if _, loaded := loggedErrors.LoadOrStore(err.Error(), true); !loaded {
+		if _, exists := loggedErrors.LoadOrStore(err.Error(), true); !exists {
 			log.Printf("error: %v", err)
 		}
 	}
