@@ -56,17 +56,19 @@ func (c *Collection) Mutex() *sync.Mutex {
 }
 
 func (c *Collection) Matches(namespace string, name string, version string) bool {
-	match := true
-	if namespace != "" && name != "" {
-		match = c.CollectionInfo.Namespace == namespace && c.CollectionInfo.Name == name
+	if namespace == "" && name == "" {
+		return true
 	}
 
-	if match && version != "" {
-		constraint, _ := semver.NewConstraint("= " + version)
-		match = match && constraint.Check(c.CollectionInfo.Version)
+	if c.CollectionInfo.Namespace != namespace || c.CollectionInfo.Name != name {
+		return false
 	}
 
-	return match
+	if version == "" {
+		return true
+	}
+
+	return c.CollectionInfo.Version.String() == version
 }
 
 func ValidateCollection(collection *Collection, expectedSha256 string) error {
