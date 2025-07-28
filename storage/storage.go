@@ -68,20 +68,20 @@ func (s *Storage) Read(namespace string, name string, version string) ([]*models
 	}
 
 	for _, entry := range files {
+		filename := entry.Name()
+		if !strings.HasSuffix(filename, ".tar.gz") || entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(s.artifacts, filename)
+
 		fileInfo, err := entry.Info()
 		if err != nil {
 			continue
 		}
+		modtime := fileInfo.ModTime()
 
 		var collection *models.Collection
-		filename := fileInfo.Name()
-		path := filepath.Join(s.artifacts, filename)
-		if !strings.HasSuffix(filename, ".tar.gz") {
-			continue
-		}
-		stem := filename[:len(filename)-7]
-		signatureFilename := stem + ".asc"
-		modtime := fileInfo.ModTime()
+
 		if val, ok := s.load(filename, modtime); ok {
 			collection = val
 		} else if val, _ := models.CollectionFromXattr(path, s.xattrs); val != nil {
@@ -99,7 +99,8 @@ func (s *Storage) Read(namespace string, name string, version string) ([]*models
 			collection.Path = path
 			collection.Created = modtime.Format(models.ISO8601)
 
-			signature, err := os.ReadFile(filepath.Join(s.artifacts, signatureFilename))
+			stem := filename[:len(filename)-7]
+			signature, err := os.ReadFile(filepath.Join(s.artifacts, stem + ".asc"))
 			if err == nil {
 				collectionSignature := models.CollectionSignature{Signature: string(signature)}
 				collection.Signatures = append(collection.Signatures, collectionSignature)
