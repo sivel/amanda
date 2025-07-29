@@ -244,7 +244,7 @@ func (a *Amanda) Version(c *gin.Context) {
 		"download_url":     fmt.Sprintf("%s/artifacts/%s", a.getHost(c), collection.Filename),
 		"metadata":         collection.CollectionInfo,
 		"version":          version,
-		"signatures":       collection.Signatures,
+		"signatures":       a.storage.ReadSignatures(collection.Path),
 		"href":             fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version),
 		"requires_ansible": collection.RequiresAnsible,
 	})

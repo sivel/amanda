@@ -25,10 +25,6 @@ import (
 const XattrName = "user.amanda"
 const ISO8601 = "2006-01-02T15:04:05.000000-0700"
 
-type CollectionSignature struct {
-	Signature string `json:"signature"`
-}
-
 type CollectionInfo struct {
 	Namespace    string          `json:"namespace"`
 	Name         string          `json:"name"`
@@ -46,7 +42,6 @@ type Collection struct {
 	Sha             string
 	Created         string         `json:"created"`
 	CollectionInfo  CollectionInfo `json:"collection_info"`
-	Signatures      []CollectionSignature
 	RequiresAnsible string `json:"requires_ansible"`
 	mutex           sync.Mutex
 }

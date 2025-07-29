@@ -5,6 +5,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ type Storage struct {
 	artifacts string
 	xattrs    bool
 	cache     sync.Map
+	sigCache sync.Map
 }
 
 func New(artifacts string, xattrs bool) *Storage {
@@ -99,12 +101,6 @@ func (s *Storage) Read(namespace string, name string, version string) ([]*models
 			collection.Path = path
 			collection.Created = modtime.Format(models.ISO8601)
 
-			stem := filename[:len(filename)-7]
-			signature, err := os.ReadFile(filepath.Join(s.artifacts, stem + ".asc"))
-			if err == nil {
-				collectionSignature := models.CollectionSignature{Signature: string(signature)}
-				collection.Signatures = append(collection.Signatures, collectionSignature)
-			}
 			s.store(filename, modtime, collection)
 			if s.xattrs {
 				s.WriteXattr(collection)
@@ -120,6 +116,34 @@ func (s *Storage) Read(namespace string, name string, version string) ([]*models
 	}
 
 	return collections, nil
+}
+
+func (s *Storage) ReadSignatures(path string) []*string {
+	var signatures []*string
+	stem := path[:len(path)-7]
+	signaturePath := stem + ".asc"
+
+	fileInfo, err := os.Stat(signaturePath)
+	if err != nil {
+		return signatures
+	}
+
+	key := s.cacheKey(signaturePath, fileInfo.ModTime())
+	if val, ok := s.sigCache.Load(key); ok {
+		return val.([]*string)
+	}
+
+	signatureBytes, err := os.ReadFile(signaturePath)
+	if err != nil {
+		return signatures
+	}
+	signatureBytes = bytes.TrimSpace(signatureBytes)
+	signature := string(signatureBytes)
+	signatures = []*string{&signature}
+
+	s.sigCache.Store(key, signatures)
+
+	return signatures
 }
 
 func (s *Storage) Write(sha256 string, filename string, src io.ReadSeeker) (string, error) {
