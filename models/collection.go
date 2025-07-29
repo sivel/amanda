@@ -42,7 +42,7 @@ type Collection struct {
 	Sha             string
 	Created         string         `json:"created"`
 	CollectionInfo  CollectionInfo `json:"collection_info"`
-	RequiresAnsible string `json:"requires_ansible"`
+	RequiresAnsible string         `json:"requires_ansible"`
 	mutex           sync.Mutex
 }
 
