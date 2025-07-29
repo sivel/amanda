@@ -112,7 +112,7 @@ func getSha256Digest(file io.ReadSeeker) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func loadFilesFromTar(file io.ReadSeeker) (*Collection, *CollectionRuntime, error) {
+func loadFilesFromTar(file io.ReadSeeker) (*Collection, error) {
 	defer file.Seek(0, io.SeekStart)
 
 	var collection *Collection
@@ -120,7 +120,7 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, *CollectionRuntime, erro
 
 	gzReader, err := gzip.NewReader(file)
 	if err != nil {
-		return collection, runtime, err
+		return collection, err
 	}
 	defer gzReader.Close()
 
@@ -135,24 +135,30 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, *CollectionRuntime, erro
 		}
 
 		if err != nil {
-			return collection, runtime, err
+			return collection, err
 		}
 
 		name := strings.ToLower(header.Name)
 
 		switch name {
 		case "manifest.json", "./manifest.json":
+			if foundManifest {
+				continue
+			}
 			foundManifest = true
 			data := make([]byte, header.Size)
 			_, err := tarReader.Read(data)
 			if err != io.EOF && err != nil {
-				return collection, runtime, err
+				return collection, err
 			}
 			err = json.Unmarshal(data, &collection)
 			if err != nil {
-				return collection, runtime, err
+				return collection, err
 			}
 		case "meta/runtime.yml", "./meta/runtime.yml":
+			if foundRuntime {
+				continue
+			}
 			foundRuntime = true
 			data := make([]byte, header.Size)
 			_, err := tarReader.Read(data)
@@ -166,12 +172,16 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, *CollectionRuntime, erro
 		}
 
 	}
-	return collection, runtime, nil
+
+	if runtime != nil {
+		collection.RequiresAnsible = runtime.RequiresAnsible
+	}
+
+	return collection, nil
 }
 
 func CollectionFromTar(path string, file io.ReadSeeker) (*Collection, error) {
 	var collection *Collection
-	var runtime *CollectionRuntime
 	var err error
 
 	if file == nil {
@@ -183,17 +193,13 @@ func CollectionFromTar(path string, file io.ReadSeeker) (*Collection, error) {
 		file = f
 	}
 
-	collection, runtime, err = loadFilesFromTar(file)
+	collection, err = loadFilesFromTar(file)
 	if err != nil {
 		return nil, fmt.Errorf("manifest: %s %s", path, err)
 	}
 	collection.Sha, err = getSha256Digest(file)
 	if err != nil {
 		return nil, fmt.Errorf("sha256: %s %s", path, err)
-	}
-
-	if runtime != nil {
-		collection.RequiresAnsible = runtime.RequiresAnsible
 	}
 
 	return collection, nil
