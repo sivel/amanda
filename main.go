@@ -7,6 +7,7 @@ package main
 import (
 	_ "embed"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -22,6 +23,18 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
+var (
+	gitSHA    = "unknown"
+	buildDate = "unknown"
+	goVersion = "unknown"
+)
+
+func printVersion() {
+	fmt.Printf("Git SHA:    %s\n", gitSHA)
+	fmt.Printf("Build Date: %s\n", buildDate)
+	fmt.Printf("Go Version: %s\n", goVersion)
+}
+
 func main() {
 	var artifacts string
 	var port string
@@ -29,6 +42,7 @@ func main() {
 	var ui bool
 	var xattrs bool
 	var publish bool
+	var version bool
 	var err error
 
 	flag.StringVar(&artifacts, "artifacts", "artifacts", "Location of the artifacts dir")
@@ -37,7 +51,13 @@ func main() {
 	flag.BoolVar(&ui, "ui", false, "Enable the HTML UI")
 	flag.BoolVar(&xattrs, "xattrs", false, "Enable caching metadata on xattrs for faster startup")
 	flag.BoolVar(&publish, "publish", false, "Enable publishing routes")
+	flag.BoolVar(&version, "V", false, "Print version information and exit")
 	flag.Parse()
+
+	printVersion()
+	if version {
+		return
+	}
 
 	log.SetOutput(gin.DefaultErrorWriter)
 
