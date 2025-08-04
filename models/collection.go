@@ -138,10 +138,8 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, error) {
 			return collection, err
 		}
 
-		name := strings.ToLower(header.Name)
-
-		switch name {
-		case "manifest.json", "./manifest.json":
+		switch header.Name {
+		case "MANIFEST.json":
 			if foundManifest {
 				continue
 			}
@@ -155,7 +153,7 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, error) {
 			if err != nil {
 				return collection, err
 			}
-		case "meta/runtime.yml", "./meta/runtime.yml":
+		case "meta/runtime.yml":
 			if foundRuntime {
 				continue
 			}
@@ -171,6 +169,10 @@ func loadFilesFromTar(file io.ReadSeeker) (*Collection, error) {
 			break
 		}
 
+	}
+
+	if collection == nil {
+		return collection, fmt.Errorf("MANIFEST.json not found")
 	}
 
 	if runtime != nil {
@@ -197,6 +199,7 @@ func CollectionFromTar(path string, file io.ReadSeeker) (*Collection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("manifest: %s %s", path, err)
 	}
+
 	collection.Sha, err = getSha256Digest(file)
 	if err != nil {
 		return nil, fmt.Errorf("sha256: %s %s", path, err)

@@ -89,6 +89,10 @@ func (a *Amanda) Collections(c *gin.Context) {
 		results = append(results, a.buildCollectionResponse(c, versions))
 	}
 
+	if results == nil {
+		results = make([]gin.H, 0)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"results": results,
 	})

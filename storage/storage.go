@@ -6,11 +6,13 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -27,16 +29,18 @@ type CacheKey struct {
 }
 
 type Storage struct {
-	artifacts string
-	xattrs    bool
-	cache     sync.Map
-	sigCache sync.Map
+	artifacts   string
+	xattrs      bool
+	cache       sync.Map
+	sigCache    sync.Map
+	concurrency int
 }
 
 func New(artifacts string, xattrs bool) *Storage {
 	return &Storage{
-		artifacts: artifacts,
-		xattrs:    xattrs,
+		artifacts:   artifacts,
+		xattrs:      xattrs,
+		concurrency: runtime.NumCPU() * 2,
 	}
 }
 
@@ -69,53 +73,126 @@ func (s *Storage) Read(namespace string, name string, version string) ([]*models
 		return collections, err
 	}
 
+	var entries []os.DirEntry
 	for _, entry := range files {
 		filename := entry.Name()
 		if !strings.HasSuffix(filename, ".tar.gz") || entry.IsDir() {
 			continue
 		}
-		path := filepath.Join(s.artifacts, filename)
 
-		fileInfo, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		modtime := fileInfo.ModTime()
-
-		var collection *models.Collection
-
-		if val, ok := s.load(filename, modtime); ok {
-			collection = val
-		} else if val, _ := models.CollectionFromXattr(path, s.xattrs); val != nil {
-			collection = val
-			collection.Filename = filename
-			collection.Path = path
-			s.store(filename, modtime, collection)
-		} else {
-			collection, err = utils.LogErrOnce(models.CollectionFromTar(path, nil))
-			if err != nil {
-				continue
-			}
-
-			collection.Filename = filename
-			collection.Path = path
-			collection.Created = modtime.Format(models.ISO8601)
-
-			s.store(filename, modtime, collection)
-			if s.xattrs {
-				s.WriteXattr(collection)
-			}
-		}
-
-		if collection != nil && collection.Matches(namespace, name, version) {
-			collections = append(collections, collection)
-			if version != "" {
-				break
-			}
-		}
+		entries = append(entries, entry)
 	}
 
+	if len(entries) == 0 {
+		return collections, nil
+	}
+
+	collections = s.processFiles(entries, namespace, name, version)
 	return collections, nil
+}
+
+func (s *Storage) processFiles(entries []os.DirEntry, namespace string, name string, version string) []*models.Collection {
+	var collections []*models.Collection
+
+	var mu sync.Mutex
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	jobs := make(chan os.DirEntry, len(entries))
+	var wg sync.WaitGroup
+
+	workers := s.concurrency
+	if len(entries) < workers {
+		workers = len(entries)
+	}
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case entry, ok := <-jobs:
+					if !ok {
+						return
+					}
+
+					if collection := s.processFile(entry); collection != nil {
+						if collection.Matches(namespace, name, version) {
+							mu.Lock()
+							collections = append(collections, collection)
+							mu.Unlock()
+							if version != "" {
+								cancel()
+								return
+							}
+						}
+					}
+
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, entry := range entries {
+			select {
+			case jobs <- entry:
+				// pass
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	return collections
+}
+
+func (s *Storage) processFile(entry os.DirEntry) *models.Collection {
+	filename := entry.Name()
+	fileInfo, err := entry.Info()
+	if err != nil {
+		return nil
+	}
+	modtime := fileInfo.ModTime()
+
+	if val, ok := s.load(filename, modtime); ok {
+		return val
+	}
+
+	var collection *models.Collection
+
+	path := filepath.Join(s.artifacts, filename)
+
+	if val, _ := models.CollectionFromXattr(path, s.xattrs); val != nil {
+		collection = val
+		collection.Filename = filename
+		collection.Path = path
+		s.store(filename, modtime, collection)
+		return collection
+	}
+
+	collection, err = utils.LogErrOnce(models.CollectionFromTar(path, nil))
+	if err != nil {
+		return nil
+	}
+
+	collection.Filename = filename
+	collection.Path = path
+	collection.Created = modtime.Format(models.ISO8601)
+
+	s.store(filename, modtime, collection)
+	if s.xattrs {
+		s.WriteXattr(collection)
+	}
+
+	return collection
 }
 
 func (s *Storage) ReadSignatures(path string) []*string {
