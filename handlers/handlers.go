@@ -94,7 +94,7 @@ func (a *Amanda) Collections(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"results": results,
+		"data": results,
 	})
 }
 
@@ -109,10 +109,8 @@ func (a *Amanda) buildCollectionResponse(c *gin.Context, versions []*models.Coll
 	name := latest.CollectionInfo.Name
 
 	result := gin.H{
-		"name": name,
-		"namespace": gin.H{
-			"name": namespace,
-		},
+		"name":         name,
+		"namespace":    namespace,
 		"updated_at":   latest.Created,
 		"created_at":   oldest.Created,
 		"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name),
@@ -213,7 +211,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 		)
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"results": versions,
+		"data": versions,
 	})
 }
 
