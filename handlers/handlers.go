@@ -230,6 +230,13 @@ func (a *Amanda) Version(c *gin.Context) {
 	}
 	collection := discovered[0]
 
+	signatures := make([]gin.H, 0)
+	for _, sig := range a.storage.ReadSignatures(collection.Path) {
+		signatures = append(signatures, gin.H{
+			"signature": sig,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"artifact": gin.H{
 			"filename": collection.Filename,
@@ -246,7 +253,7 @@ func (a *Amanda) Version(c *gin.Context) {
 		"download_url":     fmt.Sprintf("%s/artifacts/%s", a.getHost(c), collection.Filename),
 		"metadata":         collection.CollectionInfo,
 		"version":          version,
-		"signatures":       a.storage.ReadSignatures(collection.Path),
+		"signatures":       signatures,
 		"href":             fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version),
 		"requires_ansible": collection.RequiresAnsible,
 	})
