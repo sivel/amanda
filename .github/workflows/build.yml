@@ -81,3 +81,63 @@ jobs:
         platforms: linux/amd64,linux/arm64
         tags: |
           ghcr.io/${{ github.repository_owner }}/amanda:latest
+
+  pages:
+    name: Publish artifacts to pages
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Create pages directory
+      run: mkdir -p pages
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: pages
+        merge-multiple: true
+
+    - name: Generate index page
+      run: |
+        cd pages
+        binary_list=""
+        for file in amanda_*; do
+            if [ -f "$file" ]; then
+              size=$(ls -lh "$file" | awk '{print $5}')
+              sha256=$(sha256sum "$file" | awk '{print $1}')
+              binary_list+="        <div class=\"download-item\">
+            <a href=\"$file\">$file</a>
+            <span class=\"file-size\">($size)</span>
+            <br><div class=\"sha256\">SHA256: $sha256</div>
+        </div>
+        "
+            fi
+        done
+
+        sed -e "s|{{COMMIT_SHA}}|${GITHUB_SHA}|g" \
+            -e "s|{{BUILD_DATE}}|$(date -u +%Y-%m-%dT%H:%M:%SZ)|g" \
+            -e "s|{{REPOSITORY}}|${GITHUB_REPOSITORY}|g" \
+            -e "s|{{BINARIES}}|${binary_list}|g" \
+            ../.github/pages-template.html > index.html
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+
+    - name: Upload to GitHub Pages
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: pages
+
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
