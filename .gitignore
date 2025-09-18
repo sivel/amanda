@@ -32,3 +32,5 @@ go.work.sum
 amanda
 amanda_*
 artifacts/
+build/
+pages/
