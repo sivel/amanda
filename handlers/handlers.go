@@ -302,3 +302,22 @@ func (a *Amanda) ImportTask(c *gin.Context) {
 		"finished_at": time.Now().Format(models.ISO8601),
 	})
 }
+
+func (a *Amanda) Docs(c *gin.Context) {
+	namespace := c.Params.ByName("namespace")
+	name := c.Params.ByName("name")
+	version := c.Params.ByName("version")
+	discovered, err := a.storage.Read(namespace, name, version)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+	if len(discovered) == 0 {
+		a.NotFound(c)
+		return
+	}
+	collection := discovered[0]
+	c.JSON(http.StatusOK, gin.H{
+		"readme": a.storage.ReadReadme(collection.Path),
+	})
+}

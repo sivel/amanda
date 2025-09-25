@@ -5,7 +5,9 @@
 package storage
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,6 +35,7 @@ type Storage struct {
 	xattrs      bool
 	cache       sync.Map
 	sigCache    sync.Map
+	readmeCache sync.Map
 	concurrency int
 }
 
@@ -221,6 +224,58 @@ func (s *Storage) ReadSignatures(path string) []*string {
 	s.sigCache.Store(key, signatures)
 
 	return signatures
+}
+
+func (s *Storage) ReadReadme(path string) string {
+	var readme string
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return readme
+	}
+
+	key := s.cacheKey(path, fileInfo.ModTime())
+	if val, ok := s.readmeCache.Load(key); ok {
+		return val.(string)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return readme
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return readme
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+	for {
+		header, err := tarReader.Next()
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return readme
+		}
+
+		switch strings.ToLower(header.Name) {
+		case "readme.md":
+			data := make([]byte, header.Size)
+			_, err := tarReader.Read(data)
+			if err == io.EOF || err == nil {
+				readme = string(data)
+				s.readmeCache.Store(key, readme)
+				return readme
+			}
+		}
+	}
+
+	return readme
 }
 
 func (s *Storage) Write(sha256 string, filename string, src io.ReadSeeker) (string, error) {

@@ -95,6 +95,7 @@ func main() {
 			r.StaticFile("/", "./index.html")
 			r.StaticFile("/index.html", "./index.html")
 		}
+		r.GET("/_ui/v1/docs/:namespace/:name/versions/:version/", amanda.Docs)
 	}
 
 	r.Run(":" + port)

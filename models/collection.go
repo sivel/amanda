@@ -26,10 +26,15 @@ const XattrName = "user.amanda"
 const ISO8601 = "2006-01-02T15:04:05.000000-0700"
 
 type CollectionInfo struct {
-	Namespace    string          `json:"namespace"`
-	Name         string          `json:"name"`
-	Version      *semver.Version `json:"version"`
-	Dependencies gin.H           `json:"dependencies"`
+	Namespace     string          `json:"namespace"`
+	Name          string          `json:"name"`
+	Version       *semver.Version `json:"version"`
+	Dependencies  gin.H           `json:"dependencies"`
+	Repository    string          `json:"repository"`
+	Documentation string          `json:"documentation"`
+	Homepage      string          `json:"homepage"`
+	Issues        string          `json:"issues"`
+	Tags          []string        `json:"tags"`
 }
 
 type CollectionRuntime struct {
