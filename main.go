@@ -42,6 +42,7 @@ func main() {
 	var ui bool
 	var xattrs bool
 	var publish bool
+	var maxPublish int64
 	var version bool
 	var err error
 
@@ -51,6 +52,7 @@ func main() {
 	flag.BoolVar(&ui, "ui", false, "Enable the HTML UI")
 	flag.BoolVar(&xattrs, "xattrs", false, "Enable caching metadata on xattrs for faster startup")
 	flag.BoolVar(&publish, "publish", false, "Enable publishing routes")
+	flag.Int64Var(&maxPublish, "max-publish", 20<<20, "Max publish size in bytes")
 	flag.BoolVar(&version, "V", false, "Print version information and exit")
 	flag.Parse()
 
@@ -69,11 +71,13 @@ func main() {
 	amanda := handlers.New(relative, storage.New(artifacts, xattrs))
 
 	r := gin.Default()
-	r.MaxMultipartMemory = 20 << 20
+	r.MaxMultipartMemory = maxPublish
 	r.RedirectTrailingSlash = true
 
 	r.Use(location.Default())
 	r.Use(utils.LogStatusContext())
+	r.Use(utils.MaxBodySize(maxPublish))
+	fmt.Println(maxPublish)
 
 	r.GET("/api/", amanda.Api)
 	r.GET("/api/v3/collections/", amanda.Collections)
