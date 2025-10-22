@@ -5,8 +5,12 @@
 package utils
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
@@ -105,4 +109,64 @@ func MaxBodySize(maxBytes int64) gin.HandlerFunc {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 		c.Next()
 	}
+}
+
+func GetSha256Digest(file io.ReadSeeker) (string, error) {
+	defer file.Seek(0, io.SeekStart)
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func LoadFilesFromTar(file io.ReadSeeker, caseInsensitive bool, filenames ...string) (map[string][]byte, error) {
+	defer file.Seek(0, io.SeekStart)
+
+	// If caseInsensitive, caller must pass lowercase filenames
+	fileMap := make(map[string]struct{}, len(filenames))
+	for _, name := range filenames {
+		fileMap[name] = struct{}{}
+	}
+
+	result := make(map[string][]byte)
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+	for {
+		header, err := tarReader.Next()
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		name := header.Name
+		if caseInsensitive {
+			name = strings.ToLower(name)
+		}
+
+		if _, ok := fileMap[name]; ok {
+			data := make([]byte, header.Size)
+			_, err := io.ReadFull(tarReader, data)
+			if err != nil {
+				return nil, err
+			}
+			result[name] = data
+
+			if len(result) == len(filenames) {
+				break
+			}
+		}
+	}
+
+	return result, nil
 }

@@ -5,9 +5,6 @@
 package models
 
 import (
-	"archive/tar"
-	"compress/gzip"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +15,7 @@ import (
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/gin-gonic/gin"
+	"github.com/sivel/amanda/utils"
 	"golang.org/x/sys/unix"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -108,85 +106,6 @@ func validateName(s string) bool {
 	return true
 }
 
-func getSha256Digest(file io.ReadSeeker) (string, error) {
-	defer file.Seek(0, io.SeekStart)
-	h := sha256.New()
-	if _, err := io.Copy(h, file); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
-}
-
-func loadFilesFromTar(file io.ReadSeeker) (*Collection, error) {
-	defer file.Seek(0, io.SeekStart)
-
-	var collection *Collection
-	var runtime *CollectionRuntime
-
-	gzReader, err := gzip.NewReader(file)
-	if err != nil {
-		return collection, err
-	}
-	defer gzReader.Close()
-
-	tarReader := tar.NewReader(gzReader)
-	foundManifest := false
-	foundRuntime := false
-	for {
-		header, err := tarReader.Next()
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return collection, err
-		}
-
-		switch header.Name {
-		case "MANIFEST.json":
-			if foundManifest {
-				continue
-			}
-			foundManifest = true
-			data := make([]byte, header.Size)
-			_, err := tarReader.Read(data)
-			if err != io.EOF && err != nil {
-				return collection, err
-			}
-			err = json.Unmarshal(data, &collection)
-			if err != nil {
-				return collection, err
-			}
-		case "meta/runtime.yml":
-			if foundRuntime {
-				continue
-			}
-			foundRuntime = true
-			data := make([]byte, header.Size)
-			_, err := tarReader.Read(data)
-			if err == io.EOF || err == nil {
-				yaml.Unmarshal(data, &runtime)
-			}
-		}
-
-		if foundManifest && foundRuntime {
-			break
-		}
-
-	}
-
-	if collection == nil {
-		return collection, fmt.Errorf("MANIFEST.json not found")
-	}
-
-	if runtime != nil {
-		collection.RequiresAnsible = runtime.RequiresAnsible
-	}
-
-	return collection, nil
-}
-
 func CollectionFromTar(path string, file io.ReadSeeker) (*Collection, error) {
 	var collection *Collection
 	var err error
@@ -200,12 +119,29 @@ func CollectionFromTar(path string, file io.ReadSeeker) (*Collection, error) {
 		file = f
 	}
 
-	collection, err = loadFilesFromTar(file)
+	files, err := utils.LoadFilesFromTar(file, false, "MANIFEST.json", "meta/runtime.yml")
 	if err != nil {
 		return nil, fmt.Errorf("manifest: %s %s", path, err)
 	}
 
-	collection.Sha, err = getSha256Digest(file)
+	manifestData, ok := files["MANIFEST.json"]
+	if !ok {
+		return nil, fmt.Errorf("MANIFEST.json not found in %s", path)
+	}
+
+	err = json.Unmarshal(manifestData, &collection)
+	if err != nil {
+		return nil, fmt.Errorf("manifest: %s %s", path, err)
+	}
+
+	if runtimeData, ok := files["meta/runtime.yml"]; ok {
+		var runtime CollectionRuntime
+		if err := yaml.Unmarshal(runtimeData, &runtime); err == nil {
+			collection.RequiresAnsible = runtime.RequiresAnsible
+		}
+	}
+
+	collection.Sha, err = utils.GetSha256Digest(file)
 	if err != nil {
 		return nil, fmt.Errorf("sha256: %s %s", path, err)
 	}

@@ -5,9 +5,7 @@
 package storage
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -245,34 +243,14 @@ func (s *Storage) ReadReadme(path string) string {
 	}
 	defer file.Close()
 
-	gzReader, err := gzip.NewReader(file)
+	files, err := utils.LoadFilesFromTar(file, true, "readme.md")
 	if err != nil {
 		return readme
 	}
-	defer gzReader.Close()
 
-	tarReader := tar.NewReader(gzReader)
-	for {
-		header, err := tarReader.Next()
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return readme
-		}
-
-		switch strings.ToLower(header.Name) {
-		case "readme.md":
-			data := make([]byte, header.Size)
-			_, err := tarReader.Read(data)
-			if err == io.EOF || err == nil {
-				readme = string(data)
-				s.readmeCache.Store(key, readme)
-				return readme
-			}
-		}
+	if data, ok := files["readme.md"]; ok {
+		readme = string(data)
+		s.readmeCache.Store(key, readme)
 	}
 
 	return readme
