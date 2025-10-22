@@ -45,6 +45,26 @@ func (a *Amanda) getHost(c *gin.Context) string {
 	return fmt.Sprintf("%s://%s", url.Scheme, c.Request.Host)
 }
 
+func (a *Amanda) collectionURL(c *gin.Context, namespace, name string) string {
+	return fmt.Sprintf("%s/api/v3/collections/%s/%s/", a.getHost(c), namespace, name)
+}
+
+func (a *Amanda) versionsURL(c *gin.Context, namespace, name string) string {
+	return fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name)
+}
+
+func (a *Amanda) versionURL(c *gin.Context, namespace, name, version string) string {
+	return fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version)
+}
+
+func (a *Amanda) artifactURL(c *gin.Context, filename string) string {
+	return fmt.Sprintf("%s/artifacts/%s", a.getHost(c), filename)
+}
+
+func (a *Amanda) importTaskURL(c *gin.Context, task string) string {
+	return fmt.Sprintf("%s/api/v3/imports/collections/%s/", a.getHost(c), task)
+}
+
 func (a *Amanda) NotFound(c *gin.Context) {
 	c.JSON(http.StatusNotFound, NotFound)
 }
@@ -113,12 +133,12 @@ func (a *Amanda) buildCollectionResponse(c *gin.Context, versions []*models.Coll
 		"namespace":    namespace,
 		"updated_at":   latest.Created,
 		"created_at":   oldest.Created,
-		"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name),
+		"versions_url": a.versionsURL(c, namespace, name),
 	}
 
 	latestVersion := a.getLatestVersion(prodVersions, versions)
 	result["highest_version"] = gin.H{
-		"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, latestVersion),
+		"href":    a.versionURL(c, namespace, name, latestVersion),
 		"version": latestVersion,
 	}
 
@@ -173,13 +193,13 @@ func (a *Amanda) Collection(c *gin.Context) {
 		"namespace":    namespace,
 		"updated_at":   latest.Created,
 		"created_at":   oldest.Created,
-		"versions_url": fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", a.getHost(c), namespace, name),
-		"href":         fmt.Sprintf("%s/api/v3/collections/%s/%s/", a.getHost(c), namespace, name),
+		"versions_url": a.versionsURL(c, namespace, name),
+		"href":         a.collectionURL(c, namespace, name),
 	}
 
 	latestVersion := a.getLatestVersion(prodCollections, discovered)
 	out["highest_version"] = gin.H{
-		"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, latestVersion),
+		"href":    a.versionURL(c, namespace, name, latestVersion),
 		"version": latestVersion,
 	}
 	c.JSON(http.StatusOK, out)
@@ -202,11 +222,12 @@ func (a *Amanda) Versions(c *gin.Context) {
 
 	var versions []gin.H
 	for _, collection := range discovered {
+		version := collection.CollectionInfo.Version.String()
 		versions = append(
 			versions,
 			gin.H{
-				"href":    fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, collection.CollectionInfo.Version.String()),
-				"version": collection.CollectionInfo.Version.String(),
+				"href":    a.versionURL(c, namespace, name, version),
+				"version": version,
 			},
 		)
 	}
@@ -244,17 +265,17 @@ func (a *Amanda) Version(c *gin.Context) {
 		},
 		"collection": gin.H{
 			"name": name,
-			"href": fmt.Sprintf("%s/api/v3/collections/%s/%s/", a.getHost(c), namespace, name),
+			"href": a.collectionURL(c, namespace, name),
 		},
 		"name": name,
 		"namespace": gin.H{
 			"name": namespace,
 		},
-		"download_url":     fmt.Sprintf("%s/artifacts/%s", a.getHost(c), collection.Filename),
+		"download_url":     a.artifactURL(c, collection.Filename),
 		"metadata":         collection.CollectionInfo,
 		"version":          version,
 		"signatures":       signatures,
-		"href":             fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/%s/", a.getHost(c), namespace, name, version),
+		"href":             a.versionURL(c, namespace, name, version),
 		"requires_ansible": collection.RequiresAnsible,
 	})
 }
@@ -288,7 +309,7 @@ func (a *Amanda) Publish(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"task": fmt.Sprintf("%s/api/v3/imports/collections/%s/", a.getHost(c), dst),
+		"task": a.importTaskURL(c, dst),
 	})
 }
 
