@@ -78,6 +78,46 @@ func (a *Amanda) readOrAbort(c *gin.Context, namespace, name, version string) ([
 	return discovered, true
 }
 
+type collectionSet struct {
+	all  []*models.Collection
+	prod []*models.Collection
+}
+
+func (cs *collectionSet) latest() *models.Collection {
+	return cs.all[0]
+}
+
+func (cs *collectionSet) oldest() *models.Collection {
+	return cs.all[len(cs.all)-1]
+}
+
+func newCollectionSet(versions []*models.Collection) *collectionSet {
+	prodVersions := filterProdVersions(versions)
+	sortVersions(versions)
+	sortVersions(prodVersions)
+
+	return &collectionSet{
+		all:  versions,
+		prod: prodVersions,
+	}
+}
+
+func filterProdVersions(versions []*models.Collection) []*models.Collection {
+	var prodVersions []*models.Collection
+	for _, version := range versions {
+		if version.CollectionInfo.Version.Prerelease() == "" {
+			prodVersions = append(prodVersions, version)
+		}
+	}
+	return prodVersions
+}
+
+func sortVersions(versions []*models.Collection) {
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].CollectionInfo.Version.GreaterThan(versions[j].CollectionInfo.Version)
+	})
+}
+
 func (a *Amanda) NotFound(c *gin.Context) {
 	c.JSON(http.StatusNotFound, NotFound)
 }
@@ -132,53 +172,29 @@ func (a *Amanda) Collections(c *gin.Context) {
 }
 
 func (a *Amanda) buildCollectionResponse(c *gin.Context, versions []*models.Collection) gin.H {
-	prodVersions := a.filterProdVersions(versions)
-	a.sortVersions(versions)
-	a.sortVersions(prodVersions)
+	cs := newCollectionSet(versions)
+	namespace := cs.latest().CollectionInfo.Namespace
+	name := cs.latest().CollectionInfo.Name
 
-	latest := versions[0]
-	oldest := versions[len(versions)-1]
-	namespace := latest.CollectionInfo.Namespace
-	name := latest.CollectionInfo.Name
+	latestVersion := cs.all[0].CollectionInfo.Version.String()
+	if len(cs.prod) > 0 {
+		latestVersion = cs.prod[0].CollectionInfo.Version.String()
+	}
 
 	result := gin.H{
 		"name":         name,
 		"namespace":    namespace,
-		"updated_at":   latest.Created,
-		"created_at":   oldest.Created,
+		"updated_at":   cs.latest().Created,
+		"created_at":   cs.oldest().Created,
 		"versions_url": a.versionsURL(c, namespace, name),
 	}
 
-	latestVersion := a.getLatestVersion(prodVersions, versions)
 	result["highest_version"] = gin.H{
 		"href":    a.versionURL(c, namespace, name, latestVersion),
 		"version": latestVersion,
 	}
 
 	return result
-}
-
-func (a *Amanda) filterProdVersions(versions []*models.Collection) []*models.Collection {
-	var prodVersions []*models.Collection
-	for _, version := range versions {
-		if version.CollectionInfo.Version.Prerelease() == "" {
-			prodVersions = append(prodVersions, version)
-		}
-	}
-	return prodVersions
-}
-
-func (a *Amanda) sortVersions(versions []*models.Collection) {
-	sort.Slice(versions, func(i, j int) bool {
-		return versions[i].CollectionInfo.Version.GreaterThan(versions[j].CollectionInfo.Version)
-	})
-}
-
-func (a *Amanda) getLatestVersion(prodVersions, allVersions []*models.Collection) string {
-	if len(prodVersions) > 0 {
-		return prodVersions[0].CollectionInfo.Version.String()
-	}
-	return allVersions[0].CollectionInfo.Version.String()
 }
 
 func (a *Amanda) Collection(c *gin.Context) {
@@ -189,23 +205,22 @@ func (a *Amanda) Collection(c *gin.Context) {
 		return
 	}
 
-	prodCollections := a.filterProdVersions(discovered)
-	a.sortVersions(discovered)
-	a.sortVersions(prodCollections)
+	cs := newCollectionSet(discovered)
 
-	latest := discovered[0]
-	oldest := discovered[len(discovered)-1]
+	latestVersion := cs.all[0].CollectionInfo.Version.String()
+	if len(cs.prod) > 0 {
+		latestVersion = cs.prod[0].CollectionInfo.Version.String()
+	}
 
 	out := gin.H{
 		"name":         name,
 		"namespace":    namespace,
-		"updated_at":   latest.Created,
-		"created_at":   oldest.Created,
+		"updated_at":   cs.latest().Created,
+		"created_at":   cs.oldest().Created,
 		"versions_url": a.versionsURL(c, namespace, name),
 		"href":         a.collectionURL(c, namespace, name),
 	}
 
-	latestVersion := a.getLatestVersion(prodCollections, discovered)
 	out["highest_version"] = gin.H{
 		"href":    a.versionURL(c, namespace, name, latestVersion),
 		"version": latestVersion,
@@ -221,7 +236,7 @@ func (a *Amanda) Versions(c *gin.Context) {
 		return
 	}
 
-	a.sortVersions(discovered)
+	sortVersions(discovered)
 
 	var versions []gin.H
 	for _, collection := range discovered {
