@@ -65,6 +65,19 @@ func (a *Amanda) importTaskURL(c *gin.Context, task string) string {
 	return fmt.Sprintf("%s/api/v3/imports/collections/%s/", a.getHost(c), task)
 }
 
+func (a *Amanda) readOrAbort(c *gin.Context, namespace, name, version string) ([]*models.Collection, bool) {
+	discovered, err := a.storage.Read(namespace, name, version)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return nil, false
+	}
+	if len(discovered) == 0 {
+		a.NotFound(c)
+		return nil, false
+	}
+	return discovered, true
+}
+
 func (a *Amanda) NotFound(c *gin.Context) {
 	c.JSON(http.StatusNotFound, NotFound)
 }
@@ -171,13 +184,8 @@ func (a *Amanda) getLatestVersion(prodVersions, allVersions []*models.Collection
 func (a *Amanda) Collection(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	discovered, err := a.storage.Read(namespace, name, "")
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-	if len(discovered) == 0 {
-		a.NotFound(c)
+	discovered, ok := a.readOrAbort(c, namespace, name, "")
+	if !ok {
 		return
 	}
 
@@ -208,13 +216,8 @@ func (a *Amanda) Collection(c *gin.Context) {
 func (a *Amanda) Versions(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
-	discovered, err := a.storage.Read(namespace, name, "")
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-	if len(discovered) == 0 {
-		a.NotFound(c)
+	discovered, ok := a.readOrAbort(c, namespace, name, "")
+	if !ok {
 		return
 	}
 
@@ -240,13 +243,8 @@ func (a *Amanda) Version(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	version := c.Params.ByName("version")
-	discovered, err := a.storage.Read(namespace, name, version)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-	if len(discovered) == 0 {
-		a.NotFound(c)
+	discovered, ok := a.readOrAbort(c, namespace, name, version)
+	if !ok {
 		return
 	}
 	collection := discovered[0]
@@ -328,13 +326,8 @@ func (a *Amanda) Docs(c *gin.Context) {
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	version := c.Params.ByName("version")
-	discovered, err := a.storage.Read(namespace, name, version)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-	if len(discovered) == 0 {
-		a.NotFound(c)
+	discovered, ok := a.readOrAbort(c, namespace, name, version)
+	if !ok {
 		return
 	}
 	collection := discovered[0]
