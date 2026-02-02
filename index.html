@@ -201,6 +201,12 @@
                 showToast: false,
                 pageTitle: 'Collections Browser',
 
+                get basePath() {
+                    let path = window.location.pathname;
+                    if (path.endsWith('/')) path = path.slice(0, -1);
+                    return path;
+                },
+
                 withLoading(fn) {
                     return async (...args) => {
                         this.loading = true;
@@ -233,7 +239,7 @@
                 },
 
                 async fetchCollections() {
-                    const res = await fetch('/api/v3/collections/');
+                    const res = await fetch(this.basePath + '/api/v3/collections/');
                     const data = await res.json();
                     this.collections = data.data.sort((a, b) => {
                         const nameA = a.namespace + '.' + a.name;
@@ -323,7 +329,7 @@
                     const ns = this.currentCollection.namespace;
                     const name = this.currentCollection.name;
                     const version = this.selectedVersion;
-                    const url = `/api/v3/collections/${ns}/${name}/versions/${version}/`;
+                    const url = `${this.basePath}/api/v3/collections/${ns}/${name}/versions/${version}/`;
 
                     const res = await fetch(url);
                     this.versionDetails = await res.json();
@@ -334,7 +340,7 @@
                     const ns = this.currentCollection.namespace;
                     const name = this.currentCollection.name;
                     const version = this.selectedVersion;
-                    const url = `/_ui/v1/docs/${ns}/${name}/versions/${version}/`;
+                    const url = `${this.basePath}/_ui/v1/docs/${ns}/${name}/versions/${version}/`;
 
                     const res = await fetch(url);
                     this.docs = await res.json();
@@ -347,7 +353,7 @@
                     if (!this.currentCollection) return '';
                     const loc = window.location;
                     let port = loc.port ? ':' + loc.port : '';
-                    return `${loc.protocol}//${loc.hostname}${port}/`;
+                    return `${loc.protocol}//${loc.hostname}${port}${this.basePath}/`;
                 },
 
                 get installName() {

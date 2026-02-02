@@ -46,6 +46,22 @@ This application does not and will not handle any form of authentication or role
 
 Publishing does not support the ability to upload a signature.
 
+## Reverse Proxy
+
+When running `amanda` behind a reverse proxy with a path prefix (e.g., `http://example.com/amanda/` instead of `http://example.com/`), configure your reverse proxy to send the `X-Forwarded-Prefix` header so that URLs in API responses are correct.
+
+Example Caddyfile:
+
+```caddyfile
+:8080 {
+    handle_path /amanda/* {
+        reverse_proxy localhost:5000 {
+            header_up X-Forwarded-Prefix /amanda
+        }
+    }
+}
+```
+
 ## Signatures
 
 Alongside the `.tar.gz` artifact for a collection, create a file with the same base name and a `.asc` extension.

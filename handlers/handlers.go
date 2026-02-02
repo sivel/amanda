@@ -38,11 +38,12 @@ func New(relative bool, storage *storage.Storage) *Amanda {
 }
 
 func (a *Amanda) getHost(c *gin.Context) string {
+	prefix := c.GetHeader("X-Forwarded-Prefix")
 	if a.relative {
-		return ""
+		return prefix
 	}
 	url := location.Get(c)
-	return fmt.Sprintf("%s://%s", url.Scheme, c.Request.Host)
+	return fmt.Sprintf("%s://%s%s", url.Scheme, url.Host, prefix)
 }
 
 func (a *Amanda) collectionURL(c *gin.Context, namespace, name string) string {
