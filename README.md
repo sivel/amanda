@@ -62,6 +62,20 @@ Example Caddyfile:
 }
 ```
 
+Example Apache configuration:
+
+```apache
+<VirtualHost *:80>
+    ServerName example.com
+
+    ProxyPreserveHost On
+    RequestHeader set X-Forwarded-Prefix "/amanda"
+
+    ProxyPass "/amanda/" "http://localhost:5000/"
+    ProxyPassReverse "/amanda/" "http://localhost:5000/"
+</VirtualHost>
+```
+
 ## Signatures
 
 Alongside the `.tar.gz` artifact for a collection, create a file with the same base name and a `.asc` extension.
