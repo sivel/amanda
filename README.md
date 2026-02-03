@@ -65,15 +65,12 @@ Example Caddyfile:
 Example Apache configuration:
 
 ```apache
-<VirtualHost *:80>
-    ServerName example.com
-
+<Location "/amanda/">
     ProxyPreserveHost On
     RequestHeader set X-Forwarded-Prefix "/amanda"
-
-    ProxyPass "/amanda/" "http://localhost:5000/"
-    ProxyPassReverse "/amanda/" "http://localhost:5000/"
-</VirtualHost>
+    ProxyPass "http://localhost:5000/"
+    ProxyPassReverse "http://localhost:5000/"
+</Location>
 ```
 
 ## Signatures
