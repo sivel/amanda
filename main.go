@@ -77,7 +77,6 @@ func main() {
 	r.Use(location.Default())
 	r.Use(utils.LogStatusContext())
 	r.Use(utils.MaxBodySize(maxPublish))
-	fmt.Println(maxPublish)
 
 	r.GET("/api/", amanda.Api)
 	r.GET("/api/v3/collections/", amanda.Collections)
