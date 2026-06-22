@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gin-contrib/location"
+	"github.com/gin-contrib/location/v2"
 	"github.com/gin-gonic/gin"
 
 	"github.com/sivel/amanda/handlers"
